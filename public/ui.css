@@ -1,0 +1,64 @@
+/* Tacto · estilos compartidos (teléfono y experiencia). Sin build: CSS puro con tokens. */
+:root {
+  color-scheme: dark;
+  /* color */
+  --bg: #0a0710;
+  --bg-2: #0f0a17;          /* campos */
+  --card: #16111f;
+  --card-2: #1d1629;        /* hover / activo suave */
+  --line: #2b2338;
+  --line-2: #3a3050;
+  --fg: #ece8f5;
+  --mut: #9a93ae;           /* ≥ 6:1 sobre --bg y --card */
+  --vio: #8b5cf6;
+  --vio-2: #a78bfa;
+  --neo: #e6ff3d;
+  --neo-ink: #1a1d00;
+  --ok: #6ee7b7;
+  --warn: #ffb86b;
+  --err: #ff8a8a;
+  /* forma */
+  --r-s: 8px; --r-m: 12px; --r-l: 16px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px;
+  --ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--vio-2);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ease: 160ms cubic-bezier(.2, .8, .2, 1);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font); -webkit-font-smoothing: antialiased; }
+[hidden] { display: none !important; }
+
+h1, h2 { margin: 0; }
+h1 { font-size: 18px; letter-spacing: .04em; font-weight: 700; }
+h1 span, header b span { color: var(--neo); font-weight: 600; }
+h2 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--mut); font-weight: 600; margin-bottom: var(--sp-2); }
+
+/* controles */
+button, select, input { font: inherit; color: var(--fg); background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-s); padding: 6px 10px; min-height: 32px; transition: border-color var(--ease), background var(--ease), box-shadow var(--ease), transform var(--ease); }
+button, select, input[type=checkbox], input[type=range], input[type=file], label, summary { cursor: pointer; }
+button { font-weight: 500; }
+button:hover, select:hover, input:hover { border-color: var(--line-2); }
+button:hover { background: var(--card-2); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.primary { background: var(--neo); color: var(--neo-ink); border-color: var(--neo); font-weight: 700; }
+button.primary:hover { background: #f1ff7a; border-color: #f1ff7a; }
+:focus-visible { outline: none; box-shadow: var(--ring); }
+input[type=checkbox] { accent-color: var(--vio); min-height: 0; width: 16px; height: 16px; padding: 0; }
+input[type=range] { accent-color: var(--vio); padding: 0; min-height: 0; border: 0; background: transparent; }
+input[type=number] { width: 72px; font-variant-numeric: tabular-nums; }
+input[type=file] { font-size: 12px; }
+input[type=file]::file-selector-button { font: inherit; color: var(--fg); background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; margin-right: 8px; cursor: pointer; }
+select { max-width: 100%; text-overflow: ellipsis; }
+label { color: var(--mut); }
+
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-l); padding: var(--sp-4); }
+.msg { color: var(--err); font-size: 13px; min-height: 1.3em; }
+
+/* estado de conexión: color + texto (nunca solo color) */
+.dot { color: var(--mut); font-weight: 600; white-space: nowrap; }
+.dot.on { color: var(--ok); } .dot.warn { color: var(--warn); }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
