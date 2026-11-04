@@ -1,1 +1,0 @@
-window.TACTO_CONFIG = {};
