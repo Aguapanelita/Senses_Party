@@ -62,7 +62,7 @@ $('#newRoom').onclick = () => {
 function showRoom() {
   $('#room').textContent = `Sala ${room}`;
   const base = new URL('.', location.href);
-  const url = new URL('index.html', base); url.searchParams.set('sala', room);
+  const url = new URL('phone.html', base); url.searchParams.set('sala', room);
   $('#phoneUrl').textContent = url.href;
   $('#qr').hidden = true;
 }
@@ -121,5 +121,3 @@ function updateRoomFromURL() {
   catch (e) { $('#notice').textContent = 'No se pudo conectar al broker: ' + (e.message || e); }
   renderPlayers();
 })();
-
-
