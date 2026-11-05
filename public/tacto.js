@@ -78,10 +78,13 @@
   add('mic.low', 'graves', 0, 1, 'Micrófono');
   add('mic.mid', 'medios', 0, 1, 'Micrófono');
   add('mic.high', 'agudos', 0, 1, 'Micrófono');
+  add('mic.pitch', 'tono detectado (Hz)', 0, 1000, 'Micrófono');
   add('cam.motion', 'movimiento', 0, 1, 'Cámara');
   add('cam.x', 'centro del movimiento X', 0, 1, 'Cámara');
   add('cam.y', 'centro del movimiento Y', 0, 1, 'Cámara');
   add('cam.bright', 'brillo', 0, 1, 'Cámara');
+  add('cam.hue', 'tono de color (°)', 0, 360, 'Cámara');
+  add('cam.sat', 'saturación de color', 0, 1, 'Cámara');
   for (let i = 1; i <= 5; i++) {
     add(`t${i}.x`, `dedo ${i} · X`, 0, 1, `Dedo ${i}`); add(`t${i}.y`, `dedo ${i} · Y`, 0, 1, `Dedo ${i}`);
     add(`t${i}.f`, `dedo ${i} · presión`, 0, 1, `Dedo ${i}`); add(`t${i}.d`, `dedo ${i} · diámetro (px)`, 0, 120, `Dedo ${i}`);
@@ -111,9 +114,9 @@
       if (m.r) { ch['rot.x'] = num(m.r[0]); ch['rot.y'] = num(m.r[1]); ch['rot.z'] = num(m.r[2]); }
       if (m.c) { ch['acc.x'] = num(m.c[0]); ch['acc.y'] = num(m.c[1]); ch['acc.z'] = num(m.c[2]); }
     } else if (kind === 'mic') {
-      ch['mic.level'] = num(m.l); if (m.b) { ch['mic.low'] = num(m.b[0]); ch['mic.mid'] = num(m.b[1]); ch['mic.high'] = num(m.b[2]); }
+      ch['mic.level'] = num(m.l); ch['mic.pitch'] = num(m.p); if (m.b) { ch['mic.low'] = num(m.b[0]); ch['mic.mid'] = num(m.b[1]); ch['mic.high'] = num(m.b[2]); }
     } else if (kind === 'cam') {
-      ch['cam.motion'] = num(m.m); ch['cam.x'] = num(m.x); ch['cam.y'] = num(m.y); ch['cam.bright'] = num(m.b);
+      ch['cam.motion'] = num(m.m); ch['cam.x'] = num(m.x); ch['cam.y'] = num(m.y); ch['cam.bright'] = num(m.b); ch['cam.hue'] = num(m.h); ch['cam.sat'] = num(m.s);
     }
   }
 

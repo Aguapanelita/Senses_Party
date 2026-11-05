@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0a0710">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Tacto · control remoto</title>
+<title>SENSES PARTY · control</title>
 <link rel="stylesheet" href="ui.css">
 <style>
   * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
@@ -38,12 +38,13 @@
   .mod small { display: block; font-weight: 400; font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; color: var(--mut); }
   .mod.active small { color: var(--neo); }
   .msg { font-size: 13px; }
+  #spinPanel { display:flex; flex-direction:column; gap:8px; } #spinPanel p { margin:0; color:var(--fg); } #spinTarget { width:100%; }
   @media (max-height: 520px) { #mods { grid-template-columns: repeat(3, 1fr); } .mod { min-height: 44px; padding: 6px 4px; } #hud { font-size: 11px; } }
 </style>
 </head>
 <body>
   <div id="join" class="card">
-    <h1>TACTO <span>· control remoto</span></h1>
+    <h1>SENSES PARTY <span>· control</span></h1>
     <div class="field"><label for="name">Tu nombre</label>
     <input id="name" autocomplete="off" autocapitalize="off" maxlength="24" placeholder="ej: ana"></div>
     <div class="field"><label for="sala">Sala (la muestra la experiencia en el computador)</label>
@@ -61,6 +62,7 @@
       <button class="mod" id="m-mic" aria-pressed="false">Micrófono<small id="v-mic">–</small></button>
       <button class="mod" id="m-cam" aria-pressed="false">Cámara<small id="v-cam">–</small></button>
     </div>
+    <div id="spinPanel" class="card" hidden><p id="spinHelp">Ruleta disponible entre minijuegos.</p><select id="spinTarget" aria-label="Jugador objetivo" hidden></select><button id="spinAction" class="primary" type="button" disabled>Girar ruleta</button></div>
     <div class="msg" id="err2" role="alert"></div>
   </div>
 
@@ -103,8 +105,8 @@ async function connect() {
   client.on('reconnect', () => { $('#st').textContent = 'Reconectando…'; $('#st').className = 'warn'; });
   client.on('offline', () => { $('#st').textContent = 'Sin conexión'; $('#st').className = 'warn'; });
   client.on('error', e => { $('#err2').textContent = 'MQTT: ' + (e.message || e); });
-  client.on('message', (t, p) => { // la experiencia mide la latencia: respondemos al instante
-    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); } catch {}
+  client.on('message', (t, p) => { // responde al ping y recibe disponibilidad/resultados de la ruleta
+    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); if ('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m) updateSpinUi(m); } catch {}
   });
 }
 
@@ -206,17 +208,27 @@ function bindMotion() {
 
 // ---------- micrófono ----------
 let micCtx, micStream, micTimer;
+function estimatePitch(samples, sampleRate) {
+  let mean=0; for(const v of samples) mean+=v; mean/=samples.length;
+  let power=0; for(const v of samples){const x=v-mean;power+=x*x;} if(Math.sqrt(power/samples.length)<0.012)return 0;
+  const minLag=Math.max(2,Math.floor(sampleRate/1000)),maxLag=Math.min(Math.floor(sampleRate/70),Math.floor(samples.length*.45));
+  let bestLag=0,best=-1; const corrAt=lag=>{let ab=0,aa=0,bb=0;for(let i=0;i<samples.length-lag;i+=2){const a=samples[i]-mean,b=samples[i+lag]-mean;ab+=a*b;aa+=a*a;bb+=b*b;}return ab/Math.sqrt((aa*bb)||1);};
+  for(let lag=minLag;lag<=maxLag;lag++){const c=corrAt(lag);if(c>best){best=c;bestLag=lag;}}
+  if(best<0.62||!bestLag)return 0;
+  for(let lag=minLag;lag<bestLag;lag++)if(corrAt(lag)>=best*.94){bestLag=lag;break;}
+  return sampleRate/bestLag;
+}
 async function startMic() {
   micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
   micCtx = new (window.AudioContext || window.webkitAudioContext)(); await micCtx.resume();
-  const an = micCtx.createAnalyser(); an.fftSize = 1024; micCtx.createMediaStreamSource(micStream).connect(an);
+  const an = micCtx.createAnalyser(); an.fftSize = 2048; micCtx.createMediaStreamSource(micStream).connect(an);
   const t = new Float32Array(an.fftSize), f = new Uint8Array(an.frequencyBinCount), hz = micCtx.sampleRate / an.fftSize;
   const band = (a, b) => { let s = 0, n = 0; for (let i = Math.max(1, Math.floor(a / hz)); i < Math.min(f.length, Math.ceil(b / hz)); i++) { s += f[i]; n++; } return n ? s / n / 255 : 0; };
   micTimer = setInterval(() => {
     an.getFloatTimeDomainData(t); let s = 0; for (const v of t) s += v * v; an.getByteFrequencyData(f);
-    const l = Math.min(1, Math.sqrt(s / t.length) * 4);
-    pub('mic', { t: Date.now(), l: r3(l), b: [r3(band(40, 250)), r3(band(250, 2000)), r3(band(2000, 8000))] });
-    $('#v-mic').textContent = '█'.repeat(Math.round(l * 6)) || '·';
+    const l = Math.min(1, Math.sqrt(s / t.length) * 4), pitch = estimatePitch(t, micCtx.sampleRate);
+    pub('mic', { t: Date.now(), l: r3(l), p: r1(pitch), b: [r3(band(40, 250)), r3(band(250, 2000)), r3(band(2000, 8000))] });
+    $('#v-mic').textContent = ('█'.repeat(Math.round(l * 6)) || '·') + (pitch ? ` ${Math.round(pitch)}Hz` : '');
   }, 50);
 }
 function stopMic() { clearInterval(micTimer); micStream?.getTracks().forEach(t => t.stop()); micCtx?.close(); micStream = micCtx = null; }
@@ -231,12 +243,15 @@ async function startCam() {
   prev = null; let sm = 0;
   camTimer = setInterval(() => {
     wctx.drawImage(vid, 0, 0, W, H); const px = wctx.getImageData(0, 0, W, H).data, gray = new Uint8Array(W * H);
-    let bsum = 0; for (let i = 0; i < gray.length; i++) { gray[i] = (px[i * 4] * 0.3 + px[i * 4 + 1] * 0.59 + px[i * 4 + 2] * 0.11) | 0; bsum += gray[i]; }
+    let bsum = 0, rsum = 0, gsum = 0, bsumColor = 0;
+    for (let i = 0; i < gray.length; i++) { const r=px[i*4],g=px[i*4+1],b=px[i*4+2]; gray[i]=(r*.3+g*.59+b*.11)|0; bsum+=gray[i]; rsum+=r; gsum+=g; bsumColor+=b; }
+    const ar=rsum/gray.length, ag=gsum/gray.length, ab=bsumColor/gray.length, hi=Math.max(ar,ag,ab), lo=Math.min(ar,ag,ab), delta=hi-lo; let hue=0;
+    if(delta){if(hi===ar)hue=60*(((ag-ab)/delta)%6);else if(hi===ag)hue=60*((ab-ar)/delta+2);else hue=60*((ar-ag)/delta+4);if(hue<0)hue+=360;} const sat=hi?delta/hi:0;
     if (prev) {
       let n = 0, sx = 0, sy = 0;
       for (let i = 0; i < gray.length; i++) if (Math.abs(gray[i] - prev[i]) > 25) { n++; sx += i % W; sy += (i / W) | 0; }
       sm = sm * 0.4 + (n / gray.length) * 0.6;
-      pub('cam', { t: Date.now(), m: r3(sm), x: n ? r3(sx / n / W) : 0.5, y: n ? r3(sy / n / H) : 0.5, b: r3(bsum / gray.length / 255) });
+      pub('cam', { t: Date.now(), m: r3(sm), x: n ? r3(sx / n / W) : 0.5, y: n ? r3(sy / n / H) : 0.5, b: r3(bsum / gray.length / 255), h: r1(hue), s: r3(sat) });
       $('#v-cam').textContent = Math.round(sm * 100) + '%';
     }
     prev = gray;
@@ -244,6 +259,35 @@ async function startCam() {
 }
 function stopCam() { clearInterval(camTimer); camStream?.getTracks().forEach(t => t.stop()); camStream = null; }
 
+// ---------- ruleta de campeonato ----------
+let spinUiTimer = 0;
+function updateSpinUi(m) {
+  const panel = $('#spinPanel'), button = $('#spinAction'), target = $('#spinTarget');
+  const pending = !!m.sabotagePending, available = !!m.spinAvailable;
+  if (Array.isArray(m.sabotageTargets)) {
+    target.replaceChildren();
+    for (const player of m.sabotageTargets) { const option = document.createElement('option'); option.value = player.id; option.textContent = player.name; target.appendChild(option); }
+  }
+  target.hidden = !pending;
+  button.textContent = pending ? 'Confirmar sabotaje' : `Girar ruleta${m.spinTokens > 1 ? ` (${m.spinTokens})` : ''}`;
+  button.disabled = !(available || pending);
+  if (available || pending || 'spinResult' in m) panel.hidden = false;
+  if ('spinResult' in m) {
+    $('#spinHelp').textContent = m.spinResult || '';
+    clearTimeout(spinUiTimer);
+    if (!available && !pending) spinUiTimer = setTimeout(() => { panel.hidden = true; }, 7000);
+  } else if (available) $('#spinHelp').textContent = `Tienes ${m.spinTokens || 1} giro${m.spinTokens === 1 ? '' : 's'} disponible${m.spinTokens === 1 ? '' : 's'}.`;
+}
+$('#spinAction').onclick = () => {
+  if ($('#spinAction').disabled) return;
+  if ($('#spinTarget').hidden) {
+    pub('action', { action: 'spin' }, 1); $('#spinAction').disabled = true; $('#spinHelp').textContent = 'La ruleta está girando…';
+  } else {
+    const targetId = $('#spinTarget').value;
+    if (!targetId) return;
+    pub('action', { action: 'target', targetId }, 1); $('#spinAction').disabled = true; $('#spinHelp').textContent = 'Aplicando sabotaje…';
+  }
+};
 // ---------- botones ----------
 const setOn = (id, on) => { $(id).classList.toggle('active', on); $(id).setAttribute('aria-pressed', on); };
 const fail = e => { $('#err2').textContent = e.message || String(e); };

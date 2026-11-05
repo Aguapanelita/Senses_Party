@@ -1,6 +1,6 @@
 {
-  "name": "Sensor",
-  "short_name": "Sensor",
+  "name": "SENSES PARTY",
+  "short_name": "Senses",
   "start_url": "./phone.html",
   "display": "standalone",
   "orientation": "portrait",
