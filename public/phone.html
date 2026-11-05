@@ -25,6 +25,10 @@
   #st { font-weight: 600; } #st.on { color: var(--ok); } #st.warn { color: var(--warn); }
   #surface { position: relative; flex: 1; min-height: 0; border-radius: var(--r-l); border: 1px solid var(--line-2); overflow: hidden; touch-action: none;
              background: radial-gradient(circle at 50% 40%, #2a1e46, #0d0915 72%); }
+  #cameraPreview { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; transform:none; }
+  #cameraPreview.active { display:block; }
+  #colorPrompt { position:absolute; z-index:2; top:12px; left:50%; transform:translateX(-50%); padding:9px 14px; border-radius:999px; background:#101319e8; color:#fff; font-weight:700; font-size:14px; white-space:nowrap; box-shadow:0 2px 12px #0008; }
+  #colorPrompt[hidden] { display:none; }
   #cv { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   #hud { position: absolute; left: 12px; top: 10px; right: 12px; font: 12px/1.5 var(--mono); color: #d8d2ee; pointer-events: none; white-space: pre; text-shadow: 0 1px 2px #000; overflow: hidden; }
   #hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--mut); pointer-events: none; text-align: center; padding: 0 32px; font-size: 15px; }
@@ -56,7 +60,7 @@
 
   <div id="run">
     <div id="bar"><span id="st" role="status" aria-live="polite">Conectando…</span><span id="info"></span></div>
-    <div id="surface"><canvas id="cv" aria-hidden="true"></canvas><div id="hud" aria-hidden="true"></div><div id="hint">Toca y arrastra con uno o varios dedos</div></div>
+    <div id="surface"><video id="cameraPreview" autoplay playsinline muted aria-label="Vista en vivo de la cámara"></video><div id="colorPrompt" hidden></div><canvas id="cv" aria-hidden="true"></canvas><div id="hud" aria-hidden="true"></div><div id="hint">Toca y arrastra con uno o varios dedos</div></div>
     <div id="mods">
       <button class="mod" id="m-motion" aria-pressed="false">Giro<small id="v-motion">–</small></button>
       <button class="mod" id="m-mic" aria-pressed="false">Micrófono<small id="v-mic">–</small></button>
@@ -106,7 +110,7 @@ async function connect() {
   client.on('offline', () => { $('#st').textContent = 'Sin conexión'; $('#st').className = 'warn'; });
   client.on('error', e => { $('#err2').textContent = 'MQTT: ' + (e.message || e); });
   client.on('message', (t, p) => { // responde al ping y recibe disponibilidad/resultados de la ruleta
-    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); if ('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m) updateSpinUi(m); } catch {}
+    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); if ('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m || 'colorTarget' in m) updateSpinUi(m); } catch {}
   });
 }
 
@@ -234,19 +238,23 @@ async function startMic() {
 function stopMic() { clearInterval(micTimer); micStream?.getTracks().forEach(t => t.stop()); micCtx?.close(); micStream = micCtx = null; }
 
 // ---------- cámara: movimiento y brillo calculados en el teléfono (no sale video) ----------
-let camStream, camTimer, prev = null;
+let camStream, camTimer, prev = null, cameraVideo = $('#cameraPreview');
 const W = 64, H = 36, work = document.createElement('canvas'); work.width = W; work.height = H;
 const wctx = work.getContext('2d', { willReadFrequently: true });
 async function startCam() {
   camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: 640, height: 360 }, audio: false });
-  const vid = document.createElement('video'); vid.playsInline = true; vid.muted = true; vid.srcObject = camStream; await vid.play();
+  cameraVideo.srcObject = camStream; cameraVideo.classList.add('active'); await cameraVideo.play();
   prev = null; let sm = 0;
   camTimer = setInterval(() => {
-    wctx.drawImage(vid, 0, 0, W, H); const px = wctx.getImageData(0, 0, W, H).data, gray = new Uint8Array(W * H);
-    let bsum = 0, rsum = 0, gsum = 0, bsumColor = 0;
-    for (let i = 0; i < gray.length; i++) { const r=px[i*4],g=px[i*4+1],b=px[i*4+2]; gray[i]=(r*.3+g*.59+b*.11)|0; bsum+=gray[i]; rsum+=r; gsum+=g; bsumColor+=b; }
-    const ar=rsum/gray.length, ag=gsum/gray.length, ab=bsumColor/gray.length, hi=Math.max(ar,ag,ab), lo=Math.min(ar,ag,ab), delta=hi-lo; let hue=0;
-    if(delta){if(hi===ar)hue=60*(((ag-ab)/delta)%6);else if(hi===ag)hue=60*((ab-ar)/delta+2);else hue=60*((ar-ag)/delta+4);if(hue<0)hue+=360;} const sat=hi?delta/hi:0;
+    wctx.drawImage(cameraVideo, 0, 0, W, H); const px = wctx.getImageData(0, 0, W, H).data, gray = new Uint8Array(W * H);
+    let bsum=0, hueSin=0, hueCos=0, satSum=0, colorCount=0;
+    for (let i=0;i<gray.length;i++) {
+      const r=px[i*4],g=px[i*4+1],b=px[i*4+2];gray[i]=(r*.3+g*.59+b*.11)|0;bsum+=gray[i];
+      const hi=Math.max(r,g,b),lo=Math.min(r,g,b),delta=hi-lo;if(hi<35||delta<18)continue;
+      let h=0;if(delta){if(hi===r)h=60*(((g-b)/delta)%6);else if(hi===g)h=60*((b-r)/delta+2);else h=60*((r-g)/delta+4);if(h<0)h+=360;}
+      const sat=hi?delta/hi:0,weight=sat*(hi/255);hueSin+=Math.sin(h*Math.PI/180)*weight;hueCos+=Math.cos(h*Math.PI/180)*weight;satSum+=sat;colorCount++;
+    }
+    let hue=(Math.atan2(hueSin,hueCos)*180/Math.PI+360)%360;const sat=colorCount?satSum/colorCount:0;
     if (prev) {
       let n = 0, sx = 0, sy = 0;
       for (let i = 0; i < gray.length; i++) if (Math.abs(gray[i] - prev[i]) > 25) { n++; sx += i % W; sy += (i / W) | 0; }
@@ -257,11 +265,12 @@ async function startCam() {
     prev = gray;
   }, 80);
 }
-function stopCam() { clearInterval(camTimer); camStream?.getTracks().forEach(t => t.stop()); camStream = null; }
+function stopCam() { clearInterval(camTimer); camStream?.getTracks().forEach(t => t.stop()); camStream = null; cameraVideo.pause(); cameraVideo.srcObject = null; cameraVideo.classList.remove('active'); }
 
 // ---------- ruleta de campeonato ----------
 let spinUiTimer = 0;
 function updateSpinUi(m) {
+  if ('colorTarget' in m) { const prompt=$('#colorPrompt'); if(m.colorTarget){prompt.textContent=`Busca ${m.colorTarget.name}`;prompt.style.border=`2px solid ${m.colorTarget.css}`;prompt.hidden=false;}else prompt.hidden=true; }
   const panel = $('#spinPanel'), button = $('#spinAction'), target = $('#spinTarget');
   const pending = !!m.sabotagePending, available = !!m.spinAvailable;
   if (Array.isArray(m.sabotageTargets)) {
