@@ -207,7 +207,7 @@ function bindMotion() {
     if (!motionOn || !mdirty) return; mdirty = false;
     pub('motion', { t: Date.now(), a: ang && ang.map(r1), r: rot && rot.map(r1), c: acc && acc.map(r2) });
     if (ang) $('#v-motion').textContent = `${Math.round(ang[1])}° ${Math.round(ang[2])}°`;
-  }, 33);
+  }, 16);
 }
 
 // ---------- micrófono ----------
@@ -270,7 +270,8 @@ function stopCam() { clearInterval(camTimer); camStream?.getTracks().forEach(t =
 // ---------- ruleta de campeonato ----------
 let spinUiTimer = 0;
 function updateSpinUi(m) {
-  if ('colorTarget' in m) { const prompt=$('#colorPrompt'); if(m.colorTarget){prompt.textContent=`Busca ${m.colorTarget.name}`;prompt.style.border=`2px solid ${m.colorTarget.css}`;prompt.hidden=false;}else prompt.hidden=true; }
+  if ('colorTarget' in m) { const prompt=$('#colorPrompt'); if(m.colorTarget){prompt.textContent=`Busca ${m.colorTarget.name}`;prompt.style.border='1px solid #ffffff80';prompt.hidden=false;}else prompt.hidden=true; }
+  if (!('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m || 'spinTokens' in m || 'sabotageTargets' in m)) return;
   const panel = $('#spinPanel'), button = $('#spinAction'), target = $('#spinTarget');
   const pending = !!m.sabotagePending, available = !!m.spinAvailable;
   if (Array.isArray(m.sabotageTargets)) {
