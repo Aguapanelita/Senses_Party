@@ -3,19 +3,17 @@ const $ = s => document.querySelector(s);
 const canvas = $('#stage'), ctx = canvas.getContext('2d');
 const COLORS = ['#a9ed75', '#839bff', '#ffb86e', '#f48bd0', '#73d7de', '#d6a5ff', '#ff7272', '#f2df55', '#44bc91', '#e37f54'];
 const CROWN_TARGET = 5, TAPS_TO_FINISH = 8, SPIN_EVERY = 2;
-const GAME_SECONDS = { tap: 45, tilt: 60, color: 30, voice: 60, cars: 40 };
-const VOICE_LISTEN_SECONDS = 5;
+const GAME_SECONDS = { tap: 45, tilt: 60, color: 30 };
+const VOICE_CUE_SECONDS = 1.15, VOICE_ATTEMPT_SECONDS = 5, VOICE_PERMISSION_TIMEOUT = 20000, VOICE_TURN_GAP = 700;
+const VOICE_REGISTERS = [{ name:'grave', min:82, max:165 }, { name:'medio', min:210, max:370 }, { name:'agudo', min:510, max:850 }];
+const VOICE_WAVES = ['sine','triangle','square','sawtooth'];
+const VOICE_MODIFIERS = ['vibrato','tremolo','glide','harmonic','detune','none'];
 const TARGET_COLORS = [
   { name: 'rojo', hue: 0, tolerance: 28 }, { name: 'naranja', hue: 28, tolerance: 22 },
   { name: 'amarillo', hue: 54, tolerance: 24 }, { name: 'verde claro', hue: 95, tolerance: 32 },
   { name: 'verde', hue: 132, tolerance: 44 }, { name: 'turquesa', hue: 174, tolerance: 24 },
   { name: 'cian', hue: 195, tolerance: 22 }, { name: 'azul', hue: 222, tolerance: 28 },
   { name: 'violeta', hue: 270, tolerance: 26 }, { name: 'magenta', hue: 315, tolerance: 28 },
-];
-const NOTES = [
-  { name: 'Do₄', hz: 261.63 }, { name: 'Re₄', hz: 293.66 }, { name: 'Mi₄', hz: 329.63 },
-  { name: 'Fa₄', hz: 349.23 }, { name: 'Sol₄', hz: 392.00 }, { name: 'La₄', hz: 440.00 },
-  { name: 'Si₄', hz: 493.88 }, { name: 'Do₅', hz: 523.25 },
 ];
 let wheelRotation = 0;
 const wheelCanvas = $('#wheelCanvas'), wheelCtx = wheelCanvas.getContext('2d');
@@ -42,10 +40,12 @@ function animateWheel(index, playerName) {
 }let tacto, room = '', mode = 'tap', running = false, championId = null;
 let scores = {}, shields = {}, spinTokens = {}, pendingSabotage = {}, spinTargets = {};
 let playerColors = {}, nextPlayerColor = 0;
-let progress = {}, contacts = {}, cars = {}, completedGames = 0;
-let roundStart = 0, roundEnd = 0, targetColor = TARGET_COLORS[0], targetChanged = 0, targetNote = NOTES[0];
+let progress = {}, contacts = {}, completedGames = 0;
+let roundStart = 0, roundEnd = 0, targetColor = TARGET_COLORS[0], targetChanged = 0;
 let colorSequence = [], colorIndex = -1;
-let balanceNeutral = {}, balanceX = {}, voiceNotes = [], voiceBest = {}, voiceIndex = -1, voiceListening = false, voiceNotePlaying = false, voiceListenUntil = 0, voiceListenStart = 0;
+let balanceNeutral = {}, balanceX = {};
+let voiceSounds = [], voiceOrder = [], voiceResults = {}, voiceSamples = [], voiceSoundIndex = 0, voicePlayerIndex = 0, voiceCurrentId = null;
+let voiceWaiting = false, voiceListening = false, voiceReadyDeadline = 0, voiceSingStart = 0, voiceTurnEnd = 0, voiceNextAt = 0, voiceAudioContext = null;
 let lastFrame = performance.now(), lastHud = 0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmt = v => v == null || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(2);
@@ -75,13 +75,12 @@ function renderPlayers() {
     const shield = shields[d.id] || 0, games = mode === 'tap' ? `${Math.round((progress[d.id] || 0) * TAPS_TO_FINISH)}/${TAPS_TO_FINISH} toques`
       : mode === 'tilt' ? `${fmt(progress[d.id] || 0)} s dentro de la barra`
       : mode === 'color' ? `${progress[d.id] || 0}/5 colores encontrados`
-      : mode === 'voice' ? `${voiceCount(d.id)}/3 notas · ${voiceAccuracy(d.id)}`
-      : (cars[d.id]?.alive === false ? 'fuera de la pista' : 'en pista');
+      : mode === 'voice' ? `${progress[d.id] || 0}/3 turnos · ${voiceAccuracy(d.id)}` : '';
     return `<article class="player ${d.online ? '' : 'off'}"><h3><span style="color:${color}">● ${esc(d.name)}</span><span>${pts}/${CROWN_TARGET} 👑</span></h3><div class="crown-meter" aria-label="${pct}% del camino a la corona"><i style="width:${pct}%;background:${color}"></i></div><p class="tiny game-progress">${games}${shield ? ` · 🛡 ${shield}` : ''}</p><div class="values"><span>Tacto X <b>${fmt(c['touch.x'])}</b></span><span>Tacto Y <b>${fmt(c['touch.y'])}</b></span><span>Giro γ <b>${fmt(c['ang.g'])}°</b></span><span>Giro β <b>${fmt(c['ang.b'])}°</b></span><span>Voz <b>${c['mic.pitch'] ? Math.round(c['mic.pitch']) + ' Hz' : '—'}</b></span><span>Cámara <b>${c['cam.sat'] > 0.25 ? 'color' : '—'}</b></span></div></article>`;
   }).join('') : '<p class="tiny">Esperando teléfonos…</p>';
   $('#scoreboard').innerHTML = online.length ? online.map(d => `<div style="padding:4px;color:${playerColor(d.id)}">${esc(d.name)} · ${scores[d.id] || 0}/${CROWN_TARGET} para la corona${shields[d.id] ? ` · 🛡 ${shields[d.id]}` : ''}</div>`).join('') : 'Sin jugadores conectados';
   $('#crownStatus').textContent = championId ? `👑 ${tacto.devices[championId]?.name || 'Campeón'}` : `👑 Corona: ${CROWN_TARGET} puntos`;
-  $('#start').disabled = running || !!championId || (mode === 'cars' && online.length < 2);
+  $('#start').disabled = running || !!championId;
   $('#mode').disabled = running;
   draw();
 }
@@ -90,42 +89,44 @@ function instructions() {
     tap: `Cada toque hace avanzar tu barra. Llega a ${TAPS_TO_FINISH} toques; la ronda tiene un máximo de 45 segundos.`,
     tilt: 'Durante 60 segundos, inclina el teléfono y mantén un dedo presionado. Tu marcador suma tiempo cuando está dentro de la zona verde, que se mueve y cambia de tamaño.',
     color: 'La partida pide 5 colores, uno a la vez. Cada color dura hasta 5 segundos; el primero en encontrarlo suma. En el teléfono verás la cámara y solo el nombre del color.',
-    voice: 'Activa el micrófono. En cada una de las 3 oportunidades, pulsa Reproducir nota, escucha el tono y cántalo. Gana quien acumule la menor desviación.',
-    cars: 'Inclina el teléfono para conducir. Empuja a otros fuera de la pista; se necesitan dos jugadores.',
+    voice: 'Cada jugador imita 3 sonidos diferentes en su turno. Se activa su micrófono y tiene 5 segundos para cada intento; solo puede intentarlo una vez. Gana la menor desviación total.',
   };
   $('#instructions').textContent = text[mode];
-  $('#modeName').textContent = ({tap:'Carrera de toques',tilt:'Torre en equilibrio',color:'Caza de colores',voice:'Acierta la nota',cars:'Carritos chocones'})[mode];
+  $('#modeName').textContent = ({tap:'Carrera de toques',tilt:'Torre en equilibrio',color:'Caza de colores',voice:'Acierta la nota'})[mode];
 }
 function start() {
   if (running || championId) return;
   const online = devices();
   if (!online.length) { $('#round').textContent = 'Conecta al menos un teléfono.'; return; }
-  if (mode === 'cars' && online.length < 2) { $('#round').textContent = 'Carritos chocones necesita al menos dos jugadores.'; return; }
-  running = true; roundStart = performance.now(); roundEnd = roundStart + GAME_SECONDS[mode] * 1000;
+  running = true; roundStart = performance.now(); roundEnd = mode === 'voice' ? 0 : roundStart + GAME_SECONDS[mode] * 1000;
   progress = {}; for (const d of online) progress[d.id] = 0;
   if (mode === 'tap') { /* keep the current contact set so a held finger cannot create a free tap */ }
   if (mode === 'color') { colorSequence = [...TARGET_COLORS].sort(() => Math.random() - .5).slice(0, 5); colorIndex = -1; advanceColorChallenge(); }
   if (mode === 'tilt') { balanceNeutral = {}; balanceX = {}; for (const d of online) { balanceNeutral[d.id] = d.ch['ang.g'] ?? 0; balanceX[d.id] = .5; } }
-  if (mode === 'voice') { voiceNotes = [...NOTES].sort(() => Math.random() - .5).slice(0, 3); voiceBest = {}; for (const d of online) voiceBest[d.id] = [Infinity, Infinity, Infinity]; voiceIndex = -1; voiceListening = false; voiceNotePlaying = false; updateVoiceButton(); }
-  if (mode === 'cars') setupCars(online);
-  $('#round').textContent = mode === 'tilt' ? 'Equilibrio: 60 s · sujeta la pantalla con un dedo y entra en la zona verde' : mode === 'voice' ? 'Tres notas: pulsa Reproducir nota para comenzar' : mode === 'color' ? `Color 1/5: ${targetColor.name} · encuéntralo en 5 segundos` : 'Ronda en curso';
-  updateVoiceButton(); updateAllSpinStates(); renderPlayers();
+  if (mode === 'voice') {
+    voiceSounds=makeVoiceSounds();voiceOrder=online.map(d=>d.id);voiceResults={};for(const d of online)voiceResults[d.id]=[null,null,null];
+    voiceSamples=[];voiceSoundIndex=0;voicePlayerIndex=0;voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceNextAt=0;prepareVoiceAudio();
+  }
+  $('#round').textContent = mode === 'tilt' ? 'Equilibrio: 60 s · sujeta la pantalla con un dedo y entra en la zona verde' : mode === 'voice' ? 'Preparando sonidos nuevos para la partida…' : mode === 'color' ? `Color 1/5: ${targetColor.name} · encuéntralo en 5 segundos` : 'Ronda en curso';
+  updateAllSpinStates(); renderPlayers();
+  if(mode==='voice')beginVoiceTurn();
 }
 function resetScores() {
   if(running&&mode==='color')for(const d of devices())command(d.id,{colorTarget:null});
+  if(running&&mode==='voice')cancelVoiceTurn('La partida fue reiniciada.');
   scores = {}; shields = {}; spinTokens = {}; pendingSabotage = {}; spinTargets = {};
-  progress = {}; cars = {}; completedGames = 0; championId = null; running = false; voiceIndex=-1;voiceListening=false;voiceNotePlaying=false;updateVoiceButton();
+  progress = {}; completedGames = 0; championId = null; running = false; voiceWaiting=false;voiceListening=false;voiceNextAt=0;
   $('#wheelStatus').textContent = `Cada jugador gana un giro cada ${SPIN_EVERY} juegos.`;
   $('#round').textContent = 'Campeonato reiniciado'; updateAllSpinStates(); renderPlayers();
 }
 $('#start').onclick = start; $('#reset').onclick = resetScores;
-$('#playNote').onclick = playNextNote;
-$('#mode').onchange = e => { mode = e.target.value; progress = {}; instructions(); updateVoiceButton(); renderPlayers(); };
+$('#mode').onchange = e => { mode = e.target.value; progress = {}; instructions(); renderPlayers(); };
 $('#newRoom').onclick = () => {
   if(running&&mode==='color')for(const d of devices())command(d.id,{colorTarget:null});
-  running=false; voiceIndex=-1; voiceListening=false; voiceNotePlaying=false; updateVoiceButton();
+  if(running&&mode==='voice')cancelVoiceTurn('Sala cambiada.');
+  running=false; voiceWaiting=false; voiceListening=false; voiceNextAt=0;
   room = tacto.cambiarSala(Tacto.nuevaSala()); scores = {}; shields = {}; spinTokens = {};
-  pendingSabotage = {}; spinTargets = {}; completedGames = 0; championId = null; progress = {}; contacts = {}; cars = {};
+  pendingSabotage = {}; spinTargets = {}; completedGames = 0; championId = null; progress = {}; contacts = {};
   showRoom(); $('#round').textContent = 'Sala nueva · listos para jugar'; renderPlayers();
 };
 function showRoom() {
@@ -165,9 +166,12 @@ function checkColorMatch(d, sample) {
 function onData(d, kind, m) {
   if (kind === 'touch') recordTap(d, m);
   else if (kind === 'cam') checkColorMatch(d, m);
-  else if (kind === 'mic' || kind === 'motion') { /* flattened channels stay in d.ch */ }
+  else if (kind === 'mic') recordVoiceSample(d,m);
+  else if (kind === 'motion') { /* flattened channels stay in d.ch */ }
   else if (kind === 'action' && m?.action === 'spin') spin(d.id);
   else if (kind === 'action' && m?.action === 'target') applySabotage(d.id, String(m.targetId || ''));
+  else if (kind === 'action' && m?.action === 'voiceReady') voiceReady(d.id);
+  else if (kind === 'action' && m?.action === 'voiceDenied' && d.id===voiceCurrentId) skipVoiceTurn('No se autorizó el micrófono; se salta este intento.');
   renderPlayers();
 }
 function pickWinner(metric) {
@@ -178,7 +182,8 @@ function pickWinner(metric) {
 }
 function finishGame(winnerId, reason) {
   if (!running) return;
-  running = false; updateVoiceButton(); if(mode==='color')for(const d of devices())command(d.id,{colorTarget:null}); completedGames++;
+  if(mode==='voice'&&voiceCurrentId)cancelVoiceTurn('La partida terminó.');
+  running = false; if(mode==='color')for(const d of devices())command(d.id,{colorTarget:null}); completedGames++;
   const winner = winnerId ? tacto.devices[winnerId] : null;
   if (winner) scores[winnerId] = (scores[winnerId] || 0) + 1;
   const reachedCrown = winner && scores[winnerId] >= CROWN_TARGET;
@@ -240,42 +245,6 @@ function updateRoomFromURL() {
   room = tacto.sala; showRoom();
 }
 function hueDistance(a,b) { return Math.abs(((a-b+540)%360)-180); }
-function setupCars(ds) {
-  cars = {};
-  ds.forEach((d,i) => {
-    const angle = 2*Math.PI*i/ds.length - Math.PI/2;
-    cars[d.id] = { x:.5+Math.cos(angle)*.25, y:.5+Math.sin(angle)*.25, vx:0, vy:0, alive:true, cooldown:0 };
-  });
-}
-function updateCars(dt) {
-  const ds = devices();
-  for (const d of ds) {
-    const car = cars[d.id]; if (!car?.alive) continue;
-    const gx = clamp((d.ch['ang.g'] || 0)/35,-1,1), gy = clamp((d.ch['ang.b'] || 0)/35,-1,1);
-    car.vx = (car.vx + gx*dt*.9) * Math.exp(-1.15*dt);
-    car.vy = (car.vy + gy*dt*.9) * Math.exp(-1.15*dt);
-    car.x += car.vx*dt*.65; car.y += car.vy*dt*.65; car.cooldown = Math.max(0,car.cooldown-dt);
-    if (car.x < .035 || car.x > .965 || car.y < .06 || car.y > .94) car.alive = false;
-  }
-  for (let i=0;i<ds.length;i++) for (let j=i+1;j<ds.length;j++) {
-    const a=cars[ds[i].id], b=cars[ds[j].id]; if (!a?.alive || !b?.alive || a.cooldown || b.cooldown) continue;
-    const dx=b.x-a.x, dy=b.y-a.y, dist=Math.hypot(dx,dy);
-    if (dist < .075) {
-      const nx=dx/(dist||1), ny=dy/(dist||1);
-      a.vx-=nx*.6; a.vy-=ny*.6; b.vx+=nx*.6; b.vy+=ny*.6;
-      a.x-=nx*.012; a.y-=ny*.012; b.x+=nx*.012; b.y+=ny*.012;
-      a.cooldown=b.cooldown=.75;
-    }
-  }
-  const alive=ds.filter(d=>cars[d.id]?.alive);
-  if (ds.length>=2 && alive.length===1) finishGame(alive[0].id,'último en pista');
-  else if (ds.length>=2 && alive.length===0) finishGame(null,'todos fuera');
-}
-function drawCars(ds,w,h) {
-  const pad=Math.min(w,h)*.08; ctx.strokeStyle='#d8e0ef'; ctx.lineWidth=4; ctx.strokeRect(pad,pad,w-2*pad,h-2*pad);
-  ctx.strokeStyle='#536171'; ctx.lineWidth=1; ctx.strokeRect(pad+12,pad+12,w-2*pad-24,h-2*pad-24);
-  ds.forEach(d=>{const c=cars[d.id];if(!c)return;const x=c.x*w,y=c.y*h;ctx.fillStyle=playerColor(d.id);ctx.beginPath();ctx.arc(x,y,Math.max(11,Math.min(w,h)*.025),0,Math.PI*2);ctx.fill();ctx.fillStyle='#f3f5f8';ctx.font='13px system-ui';ctx.textAlign='center';ctx.fillText(c.alive?d.name:`${d.name} · fuera`,x,y-18)});
-}
 function balanceZoneAt(elapsed) {
   const width=.18+.34*(.5+.5*Math.sin(elapsed*.37+1));
   const desired=.5+.29*Math.sin(elapsed*.46)+.07*Math.sin(elapsed*1.21);
@@ -301,66 +270,93 @@ function draw() {
   const w=canvas.clientWidth,h=canvas.clientHeight;ctx.clearRect(0,0,w,h);ctx.fillStyle='#101319';ctx.fillRect(0,0,w,h);
   const ds=devices();
   if(!ds.length){ctx.fillStyle='#a9afbb';ctx.textAlign='center';ctx.font='16px system-ui';ctx.fillText('Conecta un teléfono para comenzar',w/2,h/2);return;}
-  if(mode==='cars'){drawCars(ds,w,h);return;}
   if(mode==='tilt'){drawBalance(ds,w,h);return;}
   if(mode==='color'){ctx.fillStyle='#f3f5f8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText(`COLOR ${Math.max(1,colorIndex+1)}/5 · ${targetColor.name.toUpperCase()}`,w/2,34);ctx.fillStyle='#a9afbb';ctx.font='12px system-ui';ctx.fillText(`El primero en encontrarlo suma · ${Math.max(0,5-(performance.now()-targetChanged)/1000).toFixed(1)} s`,w/2,55);}
-  if(mode==='voice'){
-    if(voiceIndex<0){ctx.fillStyle='#f3f5f8';ctx.textAlign='center';ctx.font='bold 20px system-ui';ctx.fillText('Pulsa “Reproducir nota” para empezar',w/2,h*.42);ctx.font='14px system-ui';ctx.fillText('Escucha y canta cada una de las 3 notas',w/2,h*.42+28);return;}
-    ctx.fillStyle='#f3f5f8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText(`Nota ${voiceIndex+1} de 3 · ${targetNote.name} · ${targetNote.hz.toFixed(0)} Hz`,w/2,30);
-    ctx.fillStyle='#a9afbb';ctx.font='12px system-ui';ctx.fillText(voiceListening?'¡Canta ahora!':'Escucha la nota…',w/2,49);
-    const x0=30,x1=w-30,guideY=78,targetX=x0+clamp((targetNote.hz-200)/400,0,1)*(x1-x0);
-    ctx.strokeStyle='#657086';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x0,guideY);ctx.lineTo(x1,guideY);ctx.stroke();
-    ctx.strokeStyle='#a9ed75';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(targetX,guideY-9);ctx.lineTo(targetX,guideY+9);ctx.stroke();
-    ctx.fillStyle='#a9afbb';ctx.font='10px system-ui';ctx.textAlign='left';ctx.fillText('200 Hz',x0,guideY+19);ctx.textAlign='right';ctx.fillText('600 Hz',x1,guideY+19);
-    ds.forEach((d,i)=>{const pitch=d.ch['mic.pitch'];if(pitch>0){const px=x0+clamp((pitch-200)/400,0,1)*(x1-x0);ctx.fillStyle=playerColor(d.id);ctx.beginPath();ctx.arc(px,guideY,6,0,Math.PI*2);ctx.fill();ctx.fillStyle=playerColor(d.id);ctx.textAlign='left';ctx.font='11px system-ui';ctx.fillText(d.name,px+8,guideY+4);}});
-  }
+  if(mode==='voice'){drawVoice(ds,w,h);return;}
   const row=Math.min(68,(h-90)/ds.length),top=mode==='tap'?34:76;
   ds.forEach((d,i)=>{
     const y=top+i*row+row/2,col=playerColor(d.id);ctx.fillStyle='#242934';ctx.fillRect(24,y-11,w-48,22);ctx.strokeStyle='#515a69';ctx.strokeRect(24,y-11,w-48,22);
     let fraction=0,x=24;
     if(mode==='tap'){fraction=(progress[d.id]||0)/TAPS_TO_FINISH;ctx.fillStyle=col;ctx.fillRect(24,y-11,(w-48)*fraction,22);x=24+(w-48)*fraction;}
     else if(mode==='tilt'){fraction=clamp((progress[d.id]||0)/12,0,1);x=24+(w-48)*clamp(.5+(d.ch['ang.g']||0)/100,0,1);ctx.fillStyle='#26362a';ctx.fillRect(24+(w-48)*.5,y-11,Math.max(3,(w-48)*fraction),22);}
-    else if(mode==='color'||mode==='voice'){fraction=clamp((progress[d.id]||0)/(mode==='color'?5:3),0,1);ctx.fillStyle=col;ctx.fillRect(24,y-11,(w-48)*fraction,22);x=24+(w-48)*fraction;}
+    else if(mode==='color'){fraction=clamp((progress[d.id]||0)/5,0,1);ctx.fillStyle=col;ctx.fillRect(24,y-11,(w-48)*fraction,22);x=24+(w-48)*fraction;}
     ctx.fillStyle=col;ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.fill();ctx.fillStyle='#f3f5f8';ctx.textAlign='left';ctx.font='13px system-ui';ctx.fillText(d.name,28,y-17);
   });
 }
-function voiceCount(id) { return (voiceBest[id] || []).filter(Number.isFinite).length; }
-function voiceAccuracy(id) { const a=voiceBest[id]||[],v=a.filter(Number.isFinite); return v.length ? `±${Math.round(v.reduce((s,x)=>s+x,0)/v.length)}¢` : '—'; }
-function updateVoiceButton() {
-  const b=$('#playNote'); if(!b) return;
-  b.hidden=mode!=='voice';
-  const n=Math.max(1,voiceIndex+1);
-  b.textContent=!running?'▶ Reproducir nota (3 oportunidades)':voiceNotePlaying?`Sonando nota ${n} de 3…`:voiceListening?`Escucha y canta · nota ${n} de 3`:voiceIndex>=2?'3 oportunidades completadas':`▶ Reproducir nota ${n+1} de 3`;
-  b.disabled=!running||voiceNotePlaying||voiceListening||voiceIndex>=2;
+function shuffleCopy(items) { const out=items.slice();for(let i=out.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[out[i],out[j]]=[out[j],out[i]];}return out; }
+function between(a,b) { return a+Math.random()*(b-a); }
+function makeVoiceSounds() {
+  const registers=shuffleCopy(VOICE_REGISTERS),modifiers=shuffleCopy(VOICE_MODIFIERS).slice(0,3);
+  return registers.map((r,i)=>{const hz=Math.round(between(r.min,r.max)*10)/10;return {hz,register:r.name,wave:VOICE_WAVES[Math.floor(Math.random()*VOICE_WAVES.length)],modifier:modifiers[i],rate:between(3.2,8.1),depthCents:between(12,38),glideRatio:between(.62,1.55),harmonic:[2,3,4][Math.floor(Math.random()*3)],tremoloDepth:between(.04,.1),seed:Math.random().toString(36).slice(2)};});
 }
-function playTone(hz) {
-  const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
-  const ac=new AC(),osc=ac.createOscillator(),gain=ac.createGain(),now=ac.currentTime;
-  osc.type='sine';osc.frequency.value=hz;gain.gain.setValueAtTime(.0001,now);gain.gain.linearRampToValueAtTime(.16,now+.04);gain.gain.setValueAtTime(.16,now+.72);gain.gain.exponentialRampToValueAtTime(.0001,now+1.05);
-  osc.connect(gain);gain.connect(ac.destination);osc.start(now);osc.stop(now+1.08);osc.onended=()=>ac.close();
+function prepareVoiceAudio() { const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;try{if(!voiceAudioContext)voiceAudioContext=new AC();if(voiceAudioContext.state==='suspended')voiceAudioContext.resume().catch(()=>{});}catch(e){console.warn('Audio no disponible',e);} }
+function playVoiceSound(sound) {
+  const ac=voiceAudioContext;if(!ac)return;if(ac.state==='suspended')ac.resume().catch(()=>{});
+  const now=ac.currentTime,duration=VOICE_CUE_SECONDS,osc=ac.createOscillator(),gain=ac.createGain();osc.type=sound.wave;
+  if(sound.modifier==='glide'){osc.frequency.setValueAtTime(Math.max(40,sound.hz*sound.glideRatio),now);osc.frequency.exponentialRampToValueAtTime(sound.hz,now+duration*.7);}else osc.frequency.setValueAtTime(sound.hz,now);
+  gain.gain.setValueAtTime(.0001,now);gain.gain.linearRampToValueAtTime(.13,now+.035);gain.gain.setValueAtTime(.13,now+duration*.72);gain.gain.exponentialRampToValueAtTime(.0001,now+duration);
+  osc.connect(gain);gain.connect(ac.destination);osc.start(now);osc.stop(now+duration+.02);const extras=[];
+  if(sound.modifier==='vibrato'){const lfo=ac.createOscillator(),depth=ac.createGain();lfo.frequency.value=sound.rate;depth.gain.value=sound.hz*(Math.pow(2,sound.depthCents/1200)-1);lfo.connect(depth);depth.connect(osc.frequency);lfo.start(now);lfo.stop(now+duration);extras.push(lfo,depth);}
+  else if(sound.modifier==='tremolo'){const lfo=ac.createOscillator(),depth=ac.createGain();lfo.frequency.value=sound.rate;depth.gain.value=sound.tremoloDepth;lfo.connect(depth);depth.connect(gain.gain);lfo.start(now);lfo.stop(now+duration);extras.push(lfo,depth);}
+  else if(sound.modifier==='harmonic'||sound.modifier==='detune'){const over=ac.createOscillator(),overGain=ac.createGain();over.type=sound.modifier==='harmonic'?'sine':sound.wave;over.frequency.value=sound.hz*(sound.modifier==='harmonic'?sound.harmonic:1.01);overGain.gain.setValueAtTime(.0001,now);overGain.gain.linearRampToValueAtTime(.04,now+.04);overGain.gain.setValueAtTime(.04,now+duration*.72);overGain.gain.exponentialRampToValueAtTime(.0001,now+duration);over.connect(overGain);overGain.connect(ac.destination);over.start(now);over.stop(now+duration+.02);extras.push(over,overGain);}
+  osc.onended=()=>{try{gain.disconnect();for(const n of extras)n.disconnect();}catch{}};
 }
-function playNextNote() {
-  if(!running||mode!=='voice'||voiceListening||voiceNotePlaying||voiceIndex>=2) return;
-  voiceIndex++; targetNote=voiceNotes[voiceIndex]; voiceNotePlaying=true; voiceListening=false;
-  voiceListenStart=performance.now()+1150; voiceListenUntil=voiceListenStart+VOICE_LISTEN_SECONDS*1000;
-  playTone(targetNote.hz); $('#round').textContent=`Escucha la nota ${voiceIndex+1} de 3 y luego cántala durante 5 segundos.`; updateVoiceButton();
+function voiceCount(id) { return progress[id]||0; }
+function voiceAccuracy(id) { const vals=(voiceResults[id]||[]).filter(Number.isFinite);return vals.length?`±${Math.round(vals.reduce((s,x)=>s+x,0)/vals.length)} cents`:'—'; }
+function beginVoiceTurn() {
+  if(!running||mode!=='voice')return;
+  while(voiceSoundIndex<voiceSounds.length&&voicePlayerIndex<voiceOrder.length&&!tacto.devices[voiceOrder[voicePlayerIndex]]?.online){const id=voiceOrder[voicePlayerIndex];voiceResults[id][voiceSoundIndex]=Infinity;progress[id]=voiceSoundIndex+1;advanceVoiceCursor();if(!running)return;}
+  if(voiceSoundIndex>=voiceSounds.length){finishVoiceRound();return;}
+  const id=voiceOrder[voicePlayerIndex],d=tacto.devices[id];if(!d?.online){finishVoiceRound();return;}
+  voiceCurrentId=id;voiceWaiting=true;voiceListening=false;voiceSamples=[];voiceSingStart=0;voiceReadyDeadline=performance.now()+VOICE_PERMISSION_TIMEOUT;
+  command(id,{voiceTurn:{phase:'prepare',soundIndex:voiceSoundIndex+1,total:3}});$('#round').textContent=`${d.name}: preparando el micrófono para el sonido ${voiceSoundIndex+1} de 3.`;
 }
+function voiceReady(id) {
+  if(!running||mode!=='voice'||!voiceWaiting||id!==voiceCurrentId)return;
+  voiceWaiting=false;voiceSingStart=performance.now()+VOICE_CUE_SECONDS*1000;voiceTurnEnd=voiceSingStart+VOICE_ATTEMPT_SECONDS*1000;playVoiceSound(voiceSounds[voiceSoundIndex]);
+  $('#round').textContent=`${tacto.devices[id]?.name||'Jugador'}: escucha el sonido ${voiceSoundIndex+1} de 3.`;
+}
+function recordVoiceSample(d,m) {
+  if(!running||mode!=='voice'||!voiceListening||d.id!==voiceCurrentId)return;
+  const pitch=Number(m.p),level=Number(m.l);if(!Number.isFinite(pitch)||pitch<65||pitch>900||!Number.isFinite(level)||level<.025)return;
+  voiceSamples.push(Math.abs(1200*Math.log2(pitch/voiceSounds[voiceSoundIndex].hz)));
+}
+function advanceVoiceCursor() {
+  voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voicePlayerIndex++;
+  if(voicePlayerIndex>=voiceOrder.length){voicePlayerIndex=0;voiceSoundIndex++;}
+  if(voiceSoundIndex>=voiceSounds.length){finishVoiceRound();return;}voiceNextAt=performance.now()+VOICE_TURN_GAP;
+}
+function finishVoiceTurn() {
+  if(!voiceCurrentId)return;const id=voiceCurrentId,vals=voiceSamples.slice();voiceResults[id][voiceSoundIndex]=vals.length?vals.reduce((s,x)=>s+x,0)/vals.length:Infinity;progress[id]=voiceSoundIndex+1;
+  const score=voiceResults[id][voiceSoundIndex],message=Number.isFinite(score)?`Intento ${voiceSoundIndex+1}/3 registrado · ${Math.round(score)} cents de desviación.`:`No se detectó una voz clara en el intento ${voiceSoundIndex+1}/3.`;
+  command(id,{voiceTurn:{phase:'off',message}});advanceVoiceCursor();renderPlayers();
+}
+function skipVoiceTurn(message) {
+  if(!voiceCurrentId)return;const id=voiceCurrentId;voiceResults[id][voiceSoundIndex]=Infinity;progress[id]=voiceSoundIndex+1;command(id,{voiceTurn:{phase:'off',message}});advanceVoiceCursor();renderPlayers();
+}
+function cancelVoiceTurn(message='Partida terminada.') { if(voiceCurrentId)command(voiceCurrentId,{voiceTurn:{phase:'off',message}});voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceNextAt=0; }
 function finishVoiceRound() {
-  const eligible=devices().filter(d=>voiceCount(d.id)===3).map(d=>({id:d.id,score:voiceBest[d.id].reduce((s,x)=>s+x,0)})).sort((a,b)=>a.score-b.score);
-  let winner=null;
-  if(eligible.length) winner=eligible.length>1&&Math.abs(eligible[0].score-eligible[1].score)<5?null:eligible[0].id;
-  finishGame(winner,'tres notas');
+  const eligible=voiceOrder.filter(id=>(voiceResults[id]||[]).length===3&&voiceResults[id].every(Number.isFinite)).map(id=>({id,score:voiceResults[id].reduce((s,x)=>s+x,0)/3})).sort((a,b)=>a.score-b.score);
+  let winner=null;if(eligible.length)winner=eligible.length>1&&Math.abs(eligible[0].score-eligible[1].score)<3?null:eligible[0].id;finishGame(winner,'tres sonidos');
+}
+function drawVoice(ds,w,h) {
+  ctx.textAlign='center';ctx.fillStyle='#f3f5f8';ctx.font='bold 20px system-ui';ctx.fillText('Acierta el sonido · 3 sonidos únicos',w/2,34);
+  const current=voiceCurrentId?tacto.devices[voiceCurrentId]:null;
+  if(!running){ctx.fillStyle='#a9afbb';ctx.font='14px system-ui';ctx.fillText('Inicia la partida para escuchar sonidos nuevos.',w/2,68);}
+  else if(current){ctx.fillStyle=playerColor(current.id);ctx.font='bold 17px system-ui';ctx.fillText(`${current.name} · sonido ${voiceSoundIndex+1}/3`,w/2,72);let status='Esperando que el micrófono esté listo…',fraction=0;
+    if(!voiceWaiting&&performance.now()<voiceSingStart)status='Escucha el sonido…';else if(voiceListening){const left=Math.max(0,(voiceTurnEnd-performance.now())/1000);status=`¡Imita ahora! · ${left.toFixed(1)} s`;fraction=1-left/VOICE_ATTEMPT_SECONDS;}
+    ctx.fillStyle='#a9afbb';ctx.font='14px system-ui';ctx.fillText(status,w/2,105);ctx.fillStyle='#303541';ctx.fillRect(28,125,w-56,16);ctx.fillStyle=playerColor(current.id);ctx.fillRect(28,125,(w-56)*clamp(fraction,0,1),16);
+  }else{ctx.fillStyle='#a9afbb';ctx.font='14px system-ui';ctx.fillText('Preparando el siguiente turno…',w/2,76);}
+  const top=170,row=Math.min(48,(h-top-8)/Math.max(1,ds.length));ds.forEach((d,i)=>{const y=top+i*row;ctx.fillStyle=playerColor(d.id);ctx.textAlign='left';ctx.font='13px system-ui';ctx.fillText(`${d.name} · ${progress[d.id]||0}/3 turnos · ${voiceAccuracy(d.id)}`,28,y);});
 }
 function finishByTime() {
   if(mode==='tap') finishGame(pickWinner(d=>progress[d.id]||0),'tiempo');
   else if(mode==='tilt') finishGame(pickWinner(d=>progress[d.id]||0),'tiempo');
   else if(mode==='color') finishGame(pickWinner(d=>progress[d.id]||0),'tiempo');
-  else if(mode==='voice') finishVoiceRound();
-  else finishGame(pickWinner(d=>cars[d.id]?.alive?1:0),'tiempo');
 }
 function tick(now) {
   const dt=Math.min(.05,(now-lastFrame)/1000);lastFrame=now;
-  if(running&&now>=roundEnd){finishByTime();}
+  if(running&&roundEnd>0&&now>=roundEnd){finishByTime();}
   if(running&&mode==='tilt'){
     const elapsed=(now-roundStart)/1000,{center,width}=balanceZoneAt(elapsed);
     for(const d of devices()){
@@ -374,16 +370,11 @@ function tick(now) {
   }
   if(running&&mode==='color'&&now-targetChanged>=5000)advanceColorChallenge();
   if(running&&mode==='voice'){
-    if(voiceIndex>=0&&voiceNotePlaying&&now>=voiceListenStart){voiceNotePlaying=false;voiceListening=true;updateVoiceButton();}
-    if(voiceListening){
-      for(const d of devices()){
-        const age=performance.now()-(d.last||0),pitch=d.ch['mic.pitch'],level=d.ch['mic.level'];
-        if(age<400&&pitch>0&&level>.035){const cents=Math.abs(1200*Math.log2(pitch/targetNote.hz));voiceBest[d.id] ||= [Infinity,Infinity,Infinity];voiceBest[d.id][voiceIndex]=Math.min(voiceBest[d.id][voiceIndex],cents);progress[d.id]=voiceCount(d.id);}
-      }
-      if(now>=voiceListenUntil){voiceListening=false;updateVoiceButton();if(voiceIndex>=2)finishVoiceRound();else $('#round').textContent=`Nota ${voiceIndex+1} completada. Pulsa para escuchar la siguiente.`;}
-    }
+    if(voiceWaiting&&now>=voiceReadyDeadline)skipVoiceTurn('No se pudo activar el micrófono a tiempo.');
+    if(voiceCurrentId&&!voiceWaiting&&!voiceListening&&voiceSingStart&&now>=voiceSingStart){voiceListening=true;command(voiceCurrentId,{voiceTurn:{phase:'sing',soundIndex:voiceSoundIndex+1,seconds:VOICE_ATTEMPT_SECONDS}});$('#round').textContent=`${tacto.devices[voiceCurrentId]?.name||'Jugador'}: imita el sonido ${voiceSoundIndex+1}/3 durante 5 segundos.`;}
+    if(voiceListening&&now>=voiceTurnEnd)finishVoiceTurn();
+    if(running&&!voiceCurrentId&&voiceNextAt&&now>=voiceNextAt){voiceNextAt=0;beginVoiceTurn();}
   }
-  if(running&&mode==='cars')updateCars(dt);
   draw();if(now-lastHud>300){lastHud=now;renderPlayers();}requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
@@ -391,7 +382,7 @@ $('#mode').value=mode;instructions();
 (async()=>{
   tacto=new Tacto();updateRoomFromURL();
   tacto.on('estado',s=>{$('#connection').textContent=s;$('#connection').className='pill '+(s==='conectado'?'on':'');});
-  tacto.on('datos',onData);tacto.on('dispositivo',d=>{renderPlayers();updateAllSpinStates();if(d&&running&&mode==='color')command(d.id,{colorTarget:{name:targetColor.name}});});
+  tacto.on('datos',onData);tacto.on('dispositivo',d=>{renderPlayers();updateAllSpinStates();if(d&&running&&mode==='color')command(d.id,{colorTarget:{name:targetColor.name}});if(d&&d.id===voiceCurrentId&&!d.online)skipVoiceTurn('Jugador desconectado; se salta este intento.');});
   tacto.on('rtt',d=>{const a=d.rtt.slice().sort((x,y)=>x-y);$('#latency').textContent=a.length?`Latencia ${Math.round(a[Math.floor(a.length/2)])} ms`:'';});
   tacto.on('error',e=>$('#notice').textContent=e.message||'Error de conexión');
   try{await tacto.connect();$('#notice').textContent='Conectado al broker MQTT de Tacto.';updateAllSpinStates();}

@@ -83,7 +83,7 @@ const Q = new URLSearchParams(location.search);
 $('#name').value = ls('tacto.name') || '';
 $('#sala').value = Tacto.clean(Q.get('sala')) || Tacto.clean(ls('tacto.sala')) || '';
 
-let client = null, base = '', name = '', sala = '';
+let client = null, base = '', name = '', sala = '', voiceAutoManaged = false, voiceCommandSeq = 0;
 const dev = ls('tacto.dev') || (ls('tacto.dev', Tacto.rand(6)), ls('tacto.dev'));
 const pub = (kind, obj, qos = 0, retain = false) => client && client.connected && client.publish(`${base}/${kind}`, JSON.stringify(obj), { qos, retain });
 
@@ -110,7 +110,7 @@ async function connect() {
   client.on('offline', () => { $('#st').textContent = 'Sin conexión'; $('#st').className = 'warn'; });
   client.on('error', e => { $('#err2').textContent = 'MQTT: ' + (e.message || e); });
   client.on('message', (t, p) => { // responde al ping y recibe disponibilidad/resultados de la ruleta
-    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); if ('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m || 'colorTarget' in m) updateSpinUi(m); } catch {}
+    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); if (m.voiceTurn) handleVoiceTurn(m.voiceTurn); if ('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m || 'colorTarget' in m) updateSpinUi(m); } catch {}
   });
 }
 
@@ -223,6 +223,7 @@ function estimatePitch(samples, sampleRate) {
   return sampleRate/bestLag;
 }
 async function startMic() {
+  if(micStream)return;
   micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
   micCtx = new (window.AudioContext || window.webkitAudioContext)(); await micCtx.resume();
   const an = micCtx.createAnalyser(); an.fftSize = 2048; micCtx.createMediaStreamSource(micStream).connect(an);
@@ -236,6 +237,14 @@ async function startMic() {
   }, 50);
 }
 function stopMic() { clearInterval(micTimer); micStream?.getTracks().forEach(t => t.stop()); micCtx?.close(); micStream = micCtx = null; }
+async function handleVoiceTurn(turn) {
+  if(turn.phase==='prepare') {
+    const seq=++voiceCommandSeq;voiceAutoManaged=true;$('#m-mic').disabled=true;$('#err2').textContent=`Tu turno: sonido ${turn.soundIndex} de ${turn.total}. Activando micrófono…`;
+    try { if(!micStream)await startMic(); if(seq!==voiceCommandSeq||!voiceAutoManaged){stopMic();return;} setOn('#m-mic',true);publishStatus();pub('action',{action:'voiceReady',soundIndex:turn.soundIndex},1); }
+    catch(e) { if(seq!==voiceCommandSeq)return;stopMic();setOn('#m-mic',false);voiceAutoManaged=false;$('#m-mic').disabled=false;publishStatus();fail(e);pub('action',{action:'voiceDenied',soundIndex:turn.soundIndex},1); }
+  } else if(turn.phase==='sing') { $('#err2').textContent=`¡Tu turno! Imita el sonido ${turn.soundIndex} durante ${turn.seconds} segundos.`; }
+  else if(turn.phase==='off') { ++voiceCommandSeq;voiceAutoManaged=false;if(micStream)stopMic();setOn('#m-mic',false);$('#v-mic').textContent='–';$('#m-mic').disabled=false;publishStatus();$('#err2').textContent=turn.message||'Turno terminado. Espera el siguiente sonido.'; }
+}
 
 // ---------- cámara: movimiento y brillo calculados en el teléfono (no sale video) ----------
 let camStream, camTimer, prev = null, cameraVideo = $('#cameraPreview');
