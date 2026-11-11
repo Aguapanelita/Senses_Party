@@ -83,7 +83,7 @@ const Q = new URLSearchParams(location.search);
 $('#name').value = ls('tacto.name') || '';
 $('#sala').value = Tacto.clean(Q.get('sala')) || Tacto.clean(ls('tacto.sala')) || '';
 
-let client = null, base = '', name = '', sala = '', voiceAutoManaged = false, voiceCommandSeq = 0;
+let client = null, base = '', name = '', sala = '', voiceAutoManaged = false, voiceCommandSeq = 0, voiceAwaitingTap = false;
 const dev = ls('tacto.dev') || (ls('tacto.dev', Tacto.rand(6)), ls('tacto.dev'));
 const pub = (kind, obj, qos = 0, retain = false) => client && client.connected && client.publish(`${base}/${kind}`, JSON.stringify(obj), { qos, retain });
 
@@ -238,12 +238,16 @@ async function startMic() {
 }
 function stopMic() { clearInterval(micTimer); micStream?.getTracks().forEach(t => t.stop()); micCtx?.close(); micStream = micCtx = null; }
 async function handleVoiceTurn(turn) {
-  if(turn.phase==='prepare') {
-    const seq=++voiceCommandSeq;voiceAutoManaged=true;$('#m-mic').disabled=true;$('#err2').textContent=`Tu turno: sonido ${turn.soundIndex} de ${turn.total}. Activando micrófono…`;
-    try { if(!micStream)await startMic(); if(seq!==voiceCommandSeq||!voiceAutoManaged){stopMic();return;} setOn('#m-mic',true);publishStatus();pub('action',{action:'voiceReady',soundIndex:turn.soundIndex},1); }
-    catch(e) { if(seq!==voiceCommandSeq)return;stopMic();setOn('#m-mic',false);voiceAutoManaged=false;$('#m-mic').disabled=false;publishStatus();fail(e);pub('action',{action:'voiceDenied',soundIndex:turn.soundIndex},1); }
-  } else if(turn.phase==='sing') { $('#err2').textContent=`¡Tu turno! Imita el sonido ${turn.soundIndex} durante ${turn.seconds} segundos.`; }
-  else if(turn.phase==='off') { ++voiceCommandSeq;voiceAutoManaged=false;if(micStream)stopMic();setOn('#m-mic',false);$('#v-mic').textContent='–';$('#m-mic').disabled=false;publishStatus();$('#err2').textContent=turn.message||'Turno terminado. Espera el siguiente sonido.'; }
+  if(turn.phase==='sample') {
+    voiceCommandSeq++;voiceAutoManaged=true;voiceAwaitingTap=false;$('#m-mic').disabled=true;$('#err2').textContent=`Escucha la nota ${turn.soundIndex} de ${turn.total}. El micrófono permanece apagado.`;
+    if(micStream)stopMic();setOn('#m-mic',false);$('#v-mic').textContent='–';publishStatus();pub('action',{action:'voiceSampleReady',soundIndex:turn.soundIndex},1);
+  } else if(turn.phase==='ready') {
+    voiceAutoManaged=true;voiceAwaitingTap=true;$('#m-mic').disabled=false;$('#m-mic').firstChild.textContent='Activar micrófono';$('#err2').textContent=`La nota ${turn.soundIndex} ya terminó. Toca “Activar micrófono”; tendrás 5 segundos para imitarla.`;
+  } else if(turn.phase==='sing') {
+    $('#err2').textContent=`¡Imita la nota ${turn.soundIndex}! El intento termina automáticamente en ${turn.seconds} segundos.`;
+  } else if(turn.phase==='off') {
+    voiceCommandSeq++;voiceAutoManaged=false;voiceAwaitingTap=false;if(micStream)stopMic();setOn('#m-mic',false);$('#v-mic').textContent='–';$('#m-mic').disabled=false;$('#m-mic').firstChild.textContent='Micrófono';publishStatus();$('#err2').textContent=turn.message||'Turno terminado. Espera la siguiente nota.';
+  }
 }
 
 // ---------- cámara: movimiento y brillo calculados en el teléfono (no sale video) ----------
@@ -314,7 +318,18 @@ $('#m-motion').onclick = async () => {
   try { $('#err2').textContent = ''; if (!motionOn) { await askMotion(); bindMotion(); } motionOn = !motionOn; setOn('#m-motion', motionOn); if (!motionOn) $('#v-motion').textContent = '–'; publishStatus(); } catch (e) { fail(e); }
 };
 $('#m-mic').onclick = async () => {
-  try { $('#err2').textContent = ''; if (micStream) { stopMic(); setOn('#m-mic', false); $('#v-mic').textContent = '–'; } else { await startMic(); setOn('#m-mic', true); } publishStatus(); } catch (e) { fail(e); }
+  try {
+    $('#err2').textContent = '';
+    if(voiceAutoManaged&&voiceAwaitingTap){
+      await startMic();voiceAwaitingTap=false;$('#m-mic').disabled=true;$('#m-mic').firstChild.textContent='Micrófono activo';setOn('#m-mic',true);publishStatus();pub('action',{action:'voiceReady'},1);return;
+    }
+    if(voiceAutoManaged)return;
+    if (micStream) { stopMic(); setOn('#m-mic', false); $('#v-mic').textContent = '–'; } else { await startMic(); setOn('#m-mic', true); }
+    publishStatus();
+  } catch (e) {
+    if(voiceAutoManaged){voiceAwaitingTap=false;setOn('#m-mic',false);$('#m-mic').disabled=true;publishStatus();pub('action',{action:'voiceDenied'},1);}
+    fail(e);
+  }
 };
 $('#m-cam').onclick = async () => {
   try { $('#err2').textContent = ''; if (camStream) { stopCam(); setOn('#m-cam', false); $('#v-cam').textContent = '–'; } else { await startCam(); setOn('#m-cam', true); } publishStatus(); } catch (e) { fail(e); }

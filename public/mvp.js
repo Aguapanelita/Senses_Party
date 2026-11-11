@@ -45,7 +45,7 @@ let roundStart = 0, roundEnd = 0, targetColor = TARGET_COLORS[0], targetChanged 
 let colorSequence = [], colorIndex = -1;
 let balanceNeutral = {}, balanceX = {};
 let voiceSounds = [], voiceOrder = [], voiceResults = {}, voiceSamples = [], voiceSoundIndex = 0, voicePlayerIndex = 0, voiceCurrentId = null;
-let voiceWaiting = false, voiceListening = false, voiceReadyDeadline = 0, voiceSingStart = 0, voiceTurnEnd = 0, voiceNextAt = 0, voiceAudioContext = null;
+let voiceWaiting = false, voiceListening = false, voiceReadyDeadline = 0, voiceSingStart = 0, voiceTurnEnd = 0, voiceNextAt = 0, voiceAudioContext = null, voiceStage = 'idle', voiceSampleEnd = 0;
 let lastFrame = performance.now(), lastHud = 0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmt = v => v == null || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(2);
@@ -89,7 +89,7 @@ function instructions() {
     tap: `Cada toque hace avanzar tu barra. Llega a ${TAPS_TO_FINISH} toques; la ronda tiene un máximo de 45 segundos.`,
     tilt: 'Durante 60 segundos, inclina el teléfono y mantén un dedo presionado. Tu marcador suma tiempo cuando está dentro de la zona verde, que se mueve y cambia de tamaño.',
     color: 'La partida pide 5 colores, uno a la vez. Cada color dura hasta 5 segundos; el primero en encontrarlo suma. En el teléfono verás la cámara y solo el nombre del color.',
-    voice: 'Cada jugador imita 3 sonidos diferentes en su turno. Se activa su micrófono y tiene 5 segundos para cada intento; solo puede intentarlo una vez. Gana la menor desviación total.',
+    voice: 'Cada jugador escucha una nota con el micrófono apagado. Cuando termina, activa el micrófono y tiene 5 segundos para imitarla. Un intento por nota; gana el promedio más acertado de las tres.',
   };
   $('#instructions').textContent = text[mode];
   $('#modeName').textContent = ({tap:'Carrera de toques',tilt:'Torre en equilibrio',color:'Caza de colores',voice:'Acierta la nota'})[mode];
@@ -105,7 +105,7 @@ function start() {
   if (mode === 'tilt') { balanceNeutral = {}; balanceX = {}; for (const d of online) { balanceNeutral[d.id] = d.ch['ang.g'] ?? 0; balanceX[d.id] = .5; } }
   if (mode === 'voice') {
     voiceSounds=makeVoiceSounds();voiceOrder=online.map(d=>d.id);voiceResults={};for(const d of online)voiceResults[d.id]=[null,null,null];
-    voiceSamples=[];voiceSoundIndex=0;voicePlayerIndex=0;voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceNextAt=0;prepareVoiceAudio();
+    voiceSamples=[];voiceSoundIndex=0;voicePlayerIndex=0;voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceNextAt=0;voiceStage='idle';voiceSampleEnd=0;prepareVoiceAudio();
   }
   $('#round').textContent = mode === 'tilt' ? 'Equilibrio: 60 s · sujeta la pantalla con un dedo y entra en la zona verde' : mode === 'voice' ? 'Preparando sonidos nuevos para la partida…' : mode === 'color' ? `Color 1/5: ${targetColor.name} · encuéntralo en 5 segundos` : 'Ronda en curso';
   updateAllSpinStates(); renderPlayers();
@@ -170,6 +170,7 @@ function onData(d, kind, m) {
   else if (kind === 'motion') { /* flattened channels stay in d.ch */ }
   else if (kind === 'action' && m?.action === 'spin') spin(d.id);
   else if (kind === 'action' && m?.action === 'target') applySabotage(d.id, String(m.targetId || ''));
+  else if (kind === 'action' && m?.action === 'voiceSampleReady') voiceSampleReady(d.id);
   else if (kind === 'action' && m?.action === 'voiceReady') voiceReady(d.id);
   else if (kind === 'action' && m?.action === 'voiceDenied' && d.id===voiceCurrentId) skipVoiceTurn('No se autorizó el micrófono; se salta este intento.');
   renderPlayers();
@@ -308,13 +309,19 @@ function beginVoiceTurn() {
   while(voiceSoundIndex<voiceSounds.length&&voicePlayerIndex<voiceOrder.length&&!tacto.devices[voiceOrder[voicePlayerIndex]]?.online){const id=voiceOrder[voicePlayerIndex];voiceResults[id][voiceSoundIndex]=Infinity;progress[id]=voiceSoundIndex+1;advanceVoiceCursor();if(!running)return;}
   if(voiceSoundIndex>=voiceSounds.length){finishVoiceRound();return;}
   const id=voiceOrder[voicePlayerIndex],d=tacto.devices[id];if(!d?.online){finishVoiceRound();return;}
-  voiceCurrentId=id;voiceWaiting=true;voiceListening=false;voiceSamples=[];voiceSingStart=0;voiceReadyDeadline=performance.now()+VOICE_PERMISSION_TIMEOUT;
-  command(id,{voiceTurn:{phase:'prepare',soundIndex:voiceSoundIndex+1,total:3}});$('#round').textContent=`${d.name}: preparando el micrófono para el sonido ${voiceSoundIndex+1} de 3.`;
+  voiceCurrentId=id;voiceWaiting=true;voiceListening=false;voiceSamples=[];voiceSingStart=0;voiceSampleEnd=0;voiceStage='sampleAck';voiceReadyDeadline=performance.now()+VOICE_PERMISSION_TIMEOUT;
+  command(id,{voiceTurn:{phase:'sample',soundIndex:voiceSoundIndex+1,total:3}});$('#round').textContent=`${d.name}: escucha la nota ${voiceSoundIndex+1}/3; el micrófono está apagado.`;
+}
+function voiceSampleReady(id) {
+  if(!running||mode!=='voice'||!voiceWaiting||voiceStage!=='sampleAck'||id!==voiceCurrentId)return;
+  voiceWaiting=false;voiceStage='sample';playVoiceSound(voiceSounds[voiceSoundIndex]);voiceSampleEnd=performance.now()+VOICE_CUE_SECONDS*1000+350;
+  $('#round').textContent=`${tacto.devices[id]?.name||'Jugador'}: escucha la nota ${voiceSoundIndex+1}/3.`;
 }
 function voiceReady(id) {
-  if(!running||mode!=='voice'||!voiceWaiting||id!==voiceCurrentId)return;
-  voiceWaiting=false;voiceSingStart=performance.now()+VOICE_CUE_SECONDS*1000;voiceTurnEnd=voiceSingStart+VOICE_ATTEMPT_SECONDS*1000;playVoiceSound(voiceSounds[voiceSoundIndex]);
-  $('#round').textContent=`${tacto.devices[id]?.name||'Jugador'}: escucha el sonido ${voiceSoundIndex+1} de 3.`;
+  if(!running||mode!=='voice'||!voiceWaiting||voiceStage!=='userMic'||id!==voiceCurrentId)return;
+  voiceWaiting=false;voiceListening=true;voiceStage='sing';voiceSingStart=performance.now();voiceTurnEnd=voiceSingStart+VOICE_ATTEMPT_SECONDS*1000;
+  command(id,{voiceTurn:{phase:'sing',soundIndex:voiceSoundIndex+1,seconds:VOICE_ATTEMPT_SECONDS}});
+  $('#round').textContent=`${tacto.devices[id]?.name||'Jugador'}: imita la nota ${voiceSoundIndex+1}/3 durante 5 segundos.`;
 }
 function recordVoiceSample(d,m) {
   if(!running||mode!=='voice'||!voiceListening||d.id!==voiceCurrentId)return;
@@ -322,7 +329,7 @@ function recordVoiceSample(d,m) {
   voiceSamples.push(Math.abs(1200*Math.log2(pitch/voiceSounds[voiceSoundIndex].hz)));
 }
 function advanceVoiceCursor() {
-  voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voicePlayerIndex++;
+  voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceSampleEnd=0;voiceStage='idle';voicePlayerIndex++;
   if(voicePlayerIndex>=voiceOrder.length){voicePlayerIndex=0;voiceSoundIndex++;}
   if(voiceSoundIndex>=voiceSounds.length){finishVoiceRound();return;}voiceNextAt=performance.now()+VOICE_TURN_GAP;
 }
@@ -334,7 +341,7 @@ function finishVoiceTurn() {
 function skipVoiceTurn(message) {
   if(!voiceCurrentId)return;const id=voiceCurrentId;voiceResults[id][voiceSoundIndex]=Infinity;progress[id]=voiceSoundIndex+1;command(id,{voiceTurn:{phase:'off',message}});advanceVoiceCursor();renderPlayers();
 }
-function cancelVoiceTurn(message='Partida terminada.') { if(voiceCurrentId)command(voiceCurrentId,{voiceTurn:{phase:'off',message}});voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceNextAt=0; }
+function cancelVoiceTurn(message='Partida terminada.') { if(voiceCurrentId)command(voiceCurrentId,{voiceTurn:{phase:'off',message}});voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceSampleEnd=0;voiceStage='idle';voiceNextAt=0; }
 function finishVoiceRound() {
   const eligible=voiceOrder.filter(id=>(voiceResults[id]||[]).length===3&&voiceResults[id].every(Number.isFinite)).map(id=>({id,score:voiceResults[id].reduce((s,x)=>s+x,0)/3})).sort((a,b)=>a.score-b.score);
   let winner=null;if(eligible.length)winner=eligible.length>1&&Math.abs(eligible[0].score-eligible[1].score)<3?null:eligible[0].id;finishGame(winner,'tres sonidos');
@@ -343,8 +350,8 @@ function drawVoice(ds,w,h) {
   ctx.textAlign='center';ctx.fillStyle='#f3f5f8';ctx.font='bold 20px system-ui';ctx.fillText('Acierta el sonido · 3 sonidos únicos',w/2,34);
   const current=voiceCurrentId?tacto.devices[voiceCurrentId]:null;
   if(!running){ctx.fillStyle='#a9afbb';ctx.font='14px system-ui';ctx.fillText('Inicia la partida para escuchar sonidos nuevos.',w/2,68);}
-  else if(current){ctx.fillStyle=playerColor(current.id);ctx.font='bold 17px system-ui';ctx.fillText(`${current.name} · sonido ${voiceSoundIndex+1}/3`,w/2,72);let status='Esperando que el micrófono esté listo…',fraction=0;
-    if(!voiceWaiting&&performance.now()<voiceSingStart)status='Escucha el sonido…';else if(voiceListening){const left=Math.max(0,(voiceTurnEnd-performance.now())/1000);status=`¡Imita ahora! · ${left.toFixed(1)} s`;fraction=1-left/VOICE_ATTEMPT_SECONDS;}
+  else if(current){ctx.fillStyle=playerColor(current.id);ctx.font='bold 17px system-ui';ctx.fillText(`${current.name} · nota ${voiceSoundIndex+1}/3`,w/2,72);let status='Preparando el turno…',fraction=0;
+    if(voiceStage==='sample')status='Escucha la nota de muestra…';else if(voiceStage==='userMic')status='La nota terminó · activa el micrófono en tu teléfono';else if(voiceListening){const left=Math.max(0,(voiceTurnEnd-performance.now())/1000);status=`¡Imita ahora! · ${left.toFixed(1)} s`;fraction=1-left/VOICE_ATTEMPT_SECONDS;}
     ctx.fillStyle='#a9afbb';ctx.font='14px system-ui';ctx.fillText(status,w/2,105);ctx.fillStyle='#303541';ctx.fillRect(28,125,w-56,16);ctx.fillStyle=playerColor(current.id);ctx.fillRect(28,125,(w-56)*clamp(fraction,0,1),16);
   }else{ctx.fillStyle='#a9afbb';ctx.font='14px system-ui';ctx.fillText('Preparando el siguiente turno…',w/2,76);}
   const top=170,row=Math.min(48,(h-top-8)/Math.max(1,ds.length));ds.forEach((d,i)=>{const y=top+i*row;ctx.fillStyle=playerColor(d.id);ctx.textAlign='left';ctx.font='13px system-ui';ctx.fillText(`${d.name} · ${progress[d.id]||0}/3 turnos · ${voiceAccuracy(d.id)}`,28,y);});
@@ -370,8 +377,8 @@ function tick(now) {
   }
   if(running&&mode==='color'&&now-targetChanged>=5000)advanceColorChallenge();
   if(running&&mode==='voice'){
-    if(voiceWaiting&&now>=voiceReadyDeadline)skipVoiceTurn('No se pudo activar el micrófono a tiempo.');
-    if(voiceCurrentId&&!voiceWaiting&&!voiceListening&&voiceSingStart&&now>=voiceSingStart){voiceListening=true;command(voiceCurrentId,{voiceTurn:{phase:'sing',soundIndex:voiceSoundIndex+1,seconds:VOICE_ATTEMPT_SECONDS}});$('#round').textContent=`${tacto.devices[voiceCurrentId]?.name||'Jugador'}: imita el sonido ${voiceSoundIndex+1}/3 durante 5 segundos.`;}
+    if(voiceWaiting&&now>=voiceReadyDeadline)skipVoiceTurn(voiceStage==='userMic'?'No se activó el micrófono a tiempo.':'No se pudo preparar este turno.');
+    if(voiceCurrentId&&voiceStage==='sample'&&now>=voiceSampleEnd){voiceStage='userMic';voiceWaiting=true;voiceReadyDeadline=now+VOICE_PERMISSION_TIMEOUT;command(voiceCurrentId,{voiceTurn:{phase:'ready',soundIndex:voiceSoundIndex+1,seconds:VOICE_ATTEMPT_SECONDS}});$('#round').textContent=`${tacto.devices[voiceCurrentId]?.name||'Jugador'}: la nota terminó; activa el micrófono para comenzar.`;}
     if(voiceListening&&now>=voiceTurnEnd)finishVoiceTurn();
     if(running&&!voiceCurrentId&&voiceNextAt&&now>=voiceNextAt){voiceNextAt=0;beginVoiceTurn();}
   }
