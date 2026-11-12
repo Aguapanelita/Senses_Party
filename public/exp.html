@@ -26,7 +26,7 @@
 </header>
 <main class="arena-layout">
   <section class="projection-panel" aria-label="Escenario principal">
-    <div class="arena-head"><div class="arena-heading"><span class="arena-kicker">SENSES PARTY / JUEGO EN CURSO</span><h1 id="arenaTitle">LA <span class="title-accent">SALA</span> ESTÁ LISTA</h1><p id="instructions">Cada toque hace avanzar tu barra. Llega a 8 toques; la ronda tiene un máximo de 45 segundos.</p><p id="modeName">Carrera de toques</p></div><div id="projectedScoreboard" class="projected-scoreboard" aria-label="Marcador de jugadores" aria-live="polite"><div class="score-empty">Esperando jugadores</div></div></div>
+    <div class="arena-head"><div class="arena-heading"><span class="arena-kicker">SENSES PARTY / JUEGO EN CURSO</span><h1 id="arenaTitle">LA <span class="title-accent">SALA</span> ESTÁ LISTA</h1><p id="instructions">Cada toque hace avanzar tu barra. Llega a 100 toques; puedes usar hasta tres dedos simultáneamente.</p><p id="modeName">Carrera de toques</p></div><div id="projectedScoreboard" class="projected-scoreboard" aria-label="Marcador de jugadores" aria-live="polite"><div class="score-empty">Esperando jugadores</div></div></div>
     <div id="round" class="round-callout" role="status" aria-live="polite"><i class="round-led"></i><span id="roundText">Listos para jugar</span></div>
     <div class="stage-wrap"><canvas id="stage" aria-label="Escenario del minijuego"></canvas><section id="sequenceOverlay" class="sequence-overlay" hidden aria-live="assertive"><span id="sequenceKicker" class="console-kicker">CAMPEONATO</span><h2 id="sequenceTitle">Resultados</h2><p id="sequenceMessage"></p><div id="sequenceScores" class="sequence-scores"></div><button id="sequenceContinue" class="primary" type="button" hidden>Continuar</button></section></div>
     <div class="stage-foot"><span class="stage-code">SENSES / ARENA 01</span><span class="spacer"></span><span id="room" class="pill">SALA ···</span><span class="host-only pill">5 PUNTOS HASTA LA CORONA</span></div>
@@ -53,5 +53,5 @@
   </aside>
 </main>
 <button id="projectorExit" type="button">Volver a consola</button>
-<script src="config.js"></script><script src="tacto.js"></script><script src="mvp.js"></script>
+<script src="config.js"></script><script src="tacto.js"></script><script src="game-engines.js"></script><script src="mvp.js"></script>
 </body></html>

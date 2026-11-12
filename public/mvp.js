@@ -3,18 +3,14 @@ const $ = s => document.querySelector(s);
 const canvas = $('#stage'), ctx = canvas.getContext('2d');
 const COLORS = ['#C6FF36', '#FF4D8D', '#37D9F2', '#FF9F43', '#9A72FF', '#F9E547'];
 const CROWN_TARGET = 5, TAPS_TO_FINISH = 100, SPIN_EVERY = 2;
-const GAME_SECONDS = { tap: 45, tilt: 60, color: 30 };
+const tapRace = new SensesGameEngines.TapRace(TAPS_TO_FINISH);
+const GAME_SECONDS = { tilt: 60, color: 30 };
 const VOICE_CUE_SECONDS = 1.15, VOICE_ATTEMPT_SECONDS = 3, VOICE_PERMISSION_TIMEOUT = 20000, VOICE_TURN_GAP = 700;
 const VOICE_REGISTERS = [{ name:'grave', min:82, max:165 }, { name:'medio', min:210, max:370 }, { name:'agudo', min:510, max:850 }];
 const VOICE_WAVES = ['sine','triangle','square','sawtooth'];
 const VOICE_MODIFIERS = ['vibrato','tremolo','glide','harmonic','detune','none'];
-const TARGET_COLORS = [
-  { name: 'rojo', hue: 0, tolerance: 28 }, { name: 'naranja', hue: 28, tolerance: 22 },
-  { name: 'amarillo', hue: 54, tolerance: 24 }, { name: 'verde claro', hue: 95, tolerance: 32 },
-  { name: 'verde', hue: 132, tolerance: 44 }, { name: 'turquesa', hue: 174, tolerance: 24 },
-  { name: 'cian', hue: 195, tolerance: 22 }, { name: 'azul', hue: 222, tolerance: 28 },
-  { name: 'violeta', hue: 270, tolerance: 26 }, { name: 'magenta', hue: 315, tolerance: 28 },
-];
+const TARGET_COLORS = SensesGameEngines.TARGET_COLORS;
+const colorHunt = new SensesGameEngines.ColorHunt(TARGET_COLORS, 5, 5);
 let boxOpenTimer = 0;
 const BOX_LABELS = ['Sabotaje','Escudo','Nada'];
 function animateBox(selectedIndex, resultIndex, playerName) {
@@ -76,7 +72,7 @@ function toggleSequencePause(){
   sequencePaused=!sequencePaused;$('#sequencePause').textContent=sequencePaused?'Reanudar':'Pausar';
   updateAllSpinStates();
   if(sequencePaused){sequencePausedAt=performance.now();setRound('Campeonato pausado · pulsa Reanudar para seguir.');}
-  else{const delta=performance.now()-sequencePausedAt;if(sequencePhase!=='playing')sequenceUntil+=delta;else{roundStart+=delta;if(roundEnd)roundEnd+=delta;if(targetChanged)targetChanged+=delta;if(voiceReadyDeadline)voiceReadyDeadline+=delta;if(voiceTurnEnd)voiceTurnEnd+=delta;if(voiceSampleEnd)voiceSampleEnd+=delta;if(voiceNextAt)voiceNextAt+=delta;}setRound('Campeonato reanudado');}
+  else{const delta=performance.now()-sequencePausedAt;if(sequencePhase!=='playing')sequenceUntil+=delta;else{roundStart+=delta;if(roundEnd)roundEnd+=delta;if(targetChanged)targetChanged+=delta;if(voiceReadyDeadline)voiceReadyDeadline+=delta;if(voiceTurnEnd)voiceTurnEnd+=delta;if(voiceSampleEnd)voiceSampleEnd+=delta;if(voiceNextAt)voiceNextAt+=delta;if(voiceChallenge.phase==='singing')voiceChallenge.deadline+=delta;}setRound('Campeonato reanudado');}
 }
 let sequencePausedAt=0;
 let tacto, room = '', mode = 'tap', running = false, championId = null;
@@ -88,6 +84,7 @@ let colorSequence = [], colorIndex = -1;
 let balanceNeutral = {}, balanceX = {};
 let voiceSounds = [], voiceOrder = [], voiceResults = {}, voiceSamples = [], voiceSoundIndex = 0, voicePlayerIndex = 0, voiceCurrentId = null;
 let voiceWaiting = false, voiceListening = false, voiceReadyDeadline = 0, voiceSingStart = 0, voiceTurnEnd = 0, voiceNextAt = 0, voiceAudioContext = null, voiceStage = 'idle', voiceSampleEnd = 0, voiceCommandRetryAt = 0, voiceCountdownUntil = 0;
+const voiceChallenge = new SensesGameEngines.NoteChallenge(VOICE_ATTEMPT_SECONDS);
 let lastFrame = performance.now(), lastHud = 0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmt = v => v == null || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(2);
@@ -150,13 +147,21 @@ function start() {
   if (running || championId) return;
   const online = devices();
   if (!online.length) { setRound('Conecta al menos un teléfono.'); return; }
+  if(mode==='color'&&!online.some(d=>d.caps?.cam===true)){
+    const message='Activa la cámara en al menos un control antes de iniciar Caza de colores.';setRound(message);
+    if(sequenceActive)stopSequence(message);return;
+  }
   sequencePhase=sequenceActive?'playing':'idle';hideSequence();running = true; roundStart = performance.now(); roundEnd = mode === 'voice' || mode === 'tap' ? 0 : roundStart + GAME_SECONDS[mode] * 1000;
   progress = {}; for (const d of online) progress[d.id] = 0;
-  if (mode === 'tap') { /* keep the current contact set so a held finger cannot create a free tap */ }
-  if (mode === 'color') { colorSequence = [...TARGET_COLORS].sort(() => Math.random() - .5).slice(0, 5); colorIndex = -1; advanceColorChallenge(); }
+  if (mode === 'tap') progress = tapRace.start(online.map(d => d.id)).progress;
+  if (mode === 'color') {
+    const state=colorHunt.start(online.map(d=>d.id),performance.now());
+    colorSequence=colorHunt.sequence.slice();colorIndex=state.index;targetColor=state.color;targetChanged=colorHunt.startedAt;
+    for(const d of online)command(d.id,{colorTarget:{name:targetColor.name}});
+  }
   if (mode === 'tilt') { balanceNeutral = {}; balanceX = {}; for (const d of online) { balanceNeutral[d.id] = d.ch['ang.g'] ?? 0; balanceX[d.id] = .5; } }
   if (mode === 'voice') {
-    voiceSounds=makeVoiceSounds();voiceOrder=online.map(d=>d.id);voiceResults={};for(const d of online)voiceResults[d.id]=[null,null,null];
+    voiceSounds=makeVoiceSounds();voiceOrder=online.map(d=>d.id);voiceChallenge.start(voiceOrder,voiceSounds);voiceResults=voiceChallenge.results;
     voiceSamples=[];voiceSoundIndex=0;voicePlayerIndex=0;voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceNextAt=0;voiceStage='idle';voiceSampleEnd=0;voiceCountdownUntil=0;prepareVoiceAudio();
     for(const d of online)command(d.id,{voiceTurn:{phase:'waiting',message:'Espera a que tu nombre se ilumine para activar el micrófono.'}});
   }
@@ -204,31 +209,22 @@ function recordTap(d, m) {
 }
 function recordTapEvent(d, m) {
   const eventId=String(m?.eventId||'');
-  if(!running||sequencePaused||mode!=='tap'||!eventId||tapEvents.has(eventId))return;
-  tapEvents.add(eventId);if(tapEvents.size>512)tapEvents.delete(tapEvents.values().next().value);
-  const count=clamp(Math.floor(Number(m.count)||1),1,3);
-  progress[d.id]=Math.min(TAPS_TO_FINISH,(progress[d.id]||0)+count);
-  command(d.id,{tapMode:true,tapProgress:progress[d.id],tapTarget:TAPS_TO_FINISH});
-  if(progress[d.id]>=TAPS_TO_FINISH)finishGame(d.id,'meta');
-}
-function advanceColorChallenge(foundBy = '') {
-  const previous = targetColor; colorIndex++;
-  if (colorIndex >= colorSequence.length) {
-    const winner = pickWinner(d => progress[d.id] || 0);
-    setRound(foundBy ? `${foundBy} encontró el quinto color.` : 'Se completaron los cinco colores.');
-    finishGame(winner, 'caza de cinco colores'); return;
-  }
-  targetColor = colorSequence[colorIndex]; targetChanged = performance.now();
-  for (const d of devices()) command(d.id, { colorTarget: { name: targetColor.name } });
-  $('#round').textContent = foundBy
-    ? `${foundBy} encontró ${previous.name} · ahora busca ${targetColor.name} (${colorIndex + 1}/5)`
-    : `Color ${colorIndex + 1}/5: ${targetColor.name} · encuéntralo en 5 segundos`;
+  if(!running||sequencePaused||mode!=='tap')return;
+  const result=tapRace.tap(d.id,eventId,m?.count);
+  if(!result.accepted)return;
+  progress[d.id]=result.progress;
+  command(d.id,{tapMode:tapRace.running,tapProgress:result.progress,tapTarget:TAPS_TO_FINISH});
+  if(result.winner)finishGame(result.winner,'100 toques');
 }
 function checkColorMatch(d, sample) {
-  if (!running || sequencePaused || mode !== 'color' || colorIndex < 0 || colorIndex >= colorSequence.length || performance.now() - targetChanged >= 5000) return;
-  const hue = Number(sample.h), saturation = Number(sample.s);
-  if (!Number.isFinite(hue) || !Number.isFinite(saturation) || saturation < .18 || hueDistance(hue, targetColor.hue) > targetColor.tolerance) return;
-  progress[d.id] = (progress[d.id] || 0) + 1; advanceColorChallenge(d.name);
+  if (!running || sequencePaused || mode !== 'color') return;
+  const result=colorHunt.sample(d.id,sample,performance.now());
+  if(!result.accepted)return;
+  progress={...result.scores};
+  if(result.done){setRound(`${d.name} encontró el quinto color.`);finishGame(result.winner,'caza de cinco colores');return;}
+  colorIndex=result.current.index;targetColor=result.current.color;targetChanged=colorHunt.startedAt;
+  for(const player of devices())command(player.id,{colorTarget:{name:targetColor.name}});
+  setRound(`${d.name} encontró ${result.color.name} · ahora busca ${targetColor.name} (${colorIndex+1}/5)`);
 }
 function onData(d, kind, m) {
   if (kind === 'touch') recordTap(d, m);
@@ -381,45 +377,47 @@ function voiceCount(id) { return progress[id]||0; }
 function voiceAccuracy(id) { const vals=(voiceResults[id]||[]).filter(Number.isFinite);return vals.length?`±${Math.round(vals.reduce((s,x)=>s+x,0)/vals.length)} cents`:'—'; }
 function beginVoiceTurn() {
   if(!running||mode!=='voice')return;
-  while(voiceSoundIndex<voiceSounds.length&&voicePlayerIndex<voiceOrder.length&&!tacto.devices[voiceOrder[voicePlayerIndex]]?.online){const id=voiceOrder[voicePlayerIndex];voiceResults[id][voiceSoundIndex]=Infinity;progress[id]=voiceSoundIndex+1;advanceVoiceCursor();if(!running)return;}
-  if(voiceSoundIndex>=voiceSounds.length){finishVoiceRound();return;}
-  const id=voiceOrder[voicePlayerIndex],d=tacto.devices[id];if(!d?.online){finishVoiceRound();return;}
-  voiceCurrentId=id;voiceWaiting=true;voiceListening=false;voiceSamples=[];voiceSingStart=0;voiceSampleEnd=0;voiceStage='sampleAck';voiceReadyDeadline=performance.now()+VOICE_PERMISSION_TIMEOUT;voiceCommandRetryAt=performance.now()+1200;
-  command(id,{voiceTurn:{phase:'sample',soundIndex:voiceSoundIndex+1,soundKey:voiceSounds[voiceSoundIndex].seed,total:3}});setRound(`${d.name}: escucha la nota ${voiceSoundIndex+1}/3; el micrófono está apagado.`);
+  const turn=voiceChallenge.beginTurn(devices().map(d=>d.id));voiceResults=voiceChallenge.results;
+  if(turn.type==='done'){finishVoiceRound();return;}
+  const d=tacto.devices[turn.playerId];voiceCurrentId=turn.playerId;voiceSoundIndex=turn.soundIndex-1;voicePlayerIndex=voiceOrder.indexOf(turn.playerId);
+  voiceWaiting=true;voiceListening=false;voiceSamples=[];voiceSingStart=0;voiceSampleEnd=0;voiceStage='sampleAck';voiceReadyDeadline=performance.now()+VOICE_PERMISSION_TIMEOUT;voiceCommandRetryAt=performance.now()+1200;
+  command(turn.playerId,{voiceTurn:{phase:'sample',soundIndex:turn.soundIndex,soundKey:turn.soundKey,total:3}});setRound(`${d?.name||'Jugador'}: escucha la nota ${turn.soundIndex}/3; el micrófono está apagado.`);
 }
 function voiceSampleReady(id,soundKey) {
-  if(!running||sequencePaused||mode!=='voice'||!voiceWaiting||voiceStage!=='sampleAck'||id!==voiceCurrentId||soundKey!==voiceSounds[voiceSoundIndex]?.seed)return;
-  voiceWaiting=false;voiceStage='sample';voiceCommandRetryAt=0;playVoiceSound(voiceSounds[voiceSoundIndex]);voiceSampleEnd=performance.now()+VOICE_CUE_SECONDS*1000+350;
+  if(!running||sequencePaused||mode!=='voice'||!voiceWaiting||voiceStage!=='sampleAck'||id!==voiceCurrentId)return;
+  const cue=voiceChallenge.acknowledgeSample(id,soundKey);if(!cue)return;
+  voiceWaiting=false;voiceStage='sample';voiceCommandRetryAt=0;playVoiceSound(cue.sound);voiceSampleEnd=performance.now()+VOICE_CUE_SECONDS*1000+350;
   setRound(`${tacto.devices[id]?.name||'Jugador'}: escucha la nota ${voiceSoundIndex+1}/3.`);
 }
 function voiceReady(id,soundIndex) {
-  if(!running||sequencePaused||mode!=='voice'||!voiceWaiting||voiceStage!=='userMic'||id!==voiceCurrentId||soundIndex!==voiceSoundIndex+1)return;
-  voiceWaiting=false;voiceListening=true;voiceStage='sing';voiceSingStart=performance.now();voiceTurnEnd=voiceSingStart+VOICE_ATTEMPT_SECONDS*1000;
-  command(id,{voiceTurn:{phase:'sing',soundIndex:voiceSoundIndex+1,seconds:VOICE_ATTEMPT_SECONDS}});
-  setRound(`${tacto.devices[id]?.name||'Jugador'}: imita la nota ${voiceSoundIndex+1}/3 durante 3 segundos.`);
+  if(!running||sequencePaused||mode!=='voice'||!voiceWaiting||voiceStage!=='userMic'||id!==voiceCurrentId)return;
+  const singStart=performance.now(),turn=voiceChallenge.activateMicrophone(id,soundIndex,singStart);if(!turn)return;
+  voiceWaiting=false;voiceListening=true;voiceStage='sing';voiceSingStart=singStart;voiceTurnEnd=singStart+VOICE_ATTEMPT_SECONDS*1000;
+  command(id,{voiceTurn:{phase:'sing',soundIndex:turn.soundIndex,seconds:turn.seconds}});
+  setRound(`${tacto.devices[id]?.name||'Jugador'}: imita la nota ${turn.soundIndex}/3 durante 3 segundos.`);
 }
 function recordVoiceSample(d,m) {
   if(!running||sequencePaused||mode!=='voice'||!voiceListening||d.id!==voiceCurrentId)return;
-  const pitch=Number(m.p),level=Number(m.l);if(!Number.isFinite(pitch)||pitch<65||pitch>900||!Number.isFinite(level)||level<.025)return;
-  voiceSamples.push(Math.abs(1200*Math.log2(pitch/voiceSounds[voiceSoundIndex].hz)));
-}
-function advanceVoiceCursor() {
-  voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceSampleEnd=0;voiceCommandRetryAt=0;voiceStage='idle';voicePlayerIndex++;
-  if(voicePlayerIndex>=voiceOrder.length){voicePlayerIndex=0;voiceSoundIndex++;}
-  if(voiceSoundIndex>=voiceSounds.length){finishVoiceRound();return;}voiceNextAt=performance.now()+VOICE_TURN_GAP;
+  if(voiceChallenge.addPitch(d.id,m.p,m.l))voiceSamples=voiceChallenge.centsSamples;
 }
 function finishVoiceTurn() {
-  if(!voiceCurrentId)return;const id=voiceCurrentId,vals=voiceSamples.slice();voiceResults[id][voiceSoundIndex]=vals.length?vals.reduce((s,x)=>s+x,0)/vals.length:Infinity;progress[id]=voiceSoundIndex+1;
+  if(!voiceCurrentId)return;const id=voiceCurrentId,result=voiceChallenge.tick(performance.now());if(!result)return;voiceResults=voiceChallenge.results;progress[id]=result.soundIndex;
   const score=voiceResults[id][voiceSoundIndex],message=Number.isFinite(score)?`Intento ${voiceSoundIndex+1}/3 registrado · ${Math.round(score)} cents de desviación.`:`No se detectó una voz clara en el intento ${voiceSoundIndex+1}/3.`;
-  command(id,{voiceTurn:{phase:'waiting',message:'Turno terminado. Espera a que tu nombre vuelva a iluminarse.'}});advanceVoiceCursor();renderPlayers();
+  command(id,{voiceTurn:{phase:'waiting',message:'Turno terminado. Espera a que tu nombre vuelva a iluminarse.'}});
+  voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceStage='idle';voiceNextAt=performance.now()+VOICE_TURN_GAP;
+  if(result.type==='done'){voiceNextAt=0;finishVoiceRound();}renderPlayers();
 }
 function skipVoiceTurn(message) {
-  if(!voiceCurrentId)return;const id=voiceCurrentId;voiceResults[id][voiceSoundIndex]=Infinity;progress[id]=voiceSoundIndex+1;command(id,{voiceTurn:{phase:'waiting',message:`${message} Espera a que vuelva a iluminarse tu nombre.`}});advanceVoiceCursor();renderPlayers();
+  if(!voiceCurrentId)return;const id=voiceCurrentId;voiceChallenge.skipCurrent(id);voiceResults=voiceChallenge.results;progress[id]=voiceSoundIndex+1;
+  command(id,{voiceTurn:{phase:'waiting',message:`${message} Espera a que vuelva a iluminarse tu nombre.`}});
+  voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceSampleEnd=0;voiceCommandRetryAt=0;voiceStage='idle';voiceNextAt=performance.now()+VOICE_TURN_GAP;
+  if(!voiceChallenge.running){voiceNextAt=0;finishVoiceRound();}renderPlayers();
 }
-function cancelVoiceTurn(message='Partida terminada.') { for(const id of voiceOrder)command(id,{voiceTurn:{phase:'off',message}});voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceSampleEnd=0;voiceCommandRetryAt=0;voiceStage='idle';voiceNextAt=0;voiceCountdownUntil=0; }
+function cancelVoiceTurn(message='Partida terminada.') { for(const id of voiceOrder)command(id,{voiceTurn:{phase:'off',message}});voiceChallenge.reset();voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceSampleEnd=0;voiceCommandRetryAt=0;voiceStage='idle';voiceNextAt=0;voiceCountdownUntil=0; }
 function finishVoiceRound() {
-  const eligible=voiceOrder.filter(id=>(voiceResults[id]||[]).length===3&&voiceResults[id].every(Number.isFinite)).map(id=>({id,score:voiceResults[id].reduce((s,x)=>s+x,0)/3})).sort((a,b)=>a.score-b.score);
-  let winner=null;if(eligible.length)winner=eligible.length>1&&Math.abs(eligible[0].score-eligible[1].score)<3?null:eligible[0].id;for(const id of voiceOrder)command(id,{voiceTurn:{phase:'off',message:'Las tres notas terminaron.'}});finishGame(winner,'tres sonidos');
+  const result=voiceChallenge.summary();voiceResults=voiceChallenge.results;
+  for(const id of voiceOrder)command(id,{voiceTurn:{phase:'off',message:'Las tres notas terminaron.'}});
+  finishGame(result.winner,'promedio de tres notas');
 }
 function drawVoice(ds,w,h) {
   ctx.textAlign='center';ctx.fillStyle='#f5f0e8';ctx.font='bold 20px system-ui';ctx.fillText('Acierta el sonido · 3 sonidos únicos',w/2,34);
@@ -433,8 +431,7 @@ function drawVoice(ds,w,h) {
   const top=170,row=Math.min(48,(h-top-8)/Math.max(1,ds.length));ds.forEach((d,i)=>{const y=top+i*row,ready=d.id===voiceCurrentId&&voiceStage==='userMic',singing=d.id===voiceCurrentId&&voiceListening,active=ready||singing,col=playerColor(d.id);if(active){ctx.fillStyle=ready?'#c6ff3624':'#ffffff12';ctx.fillRect(18,y-17,w-36,36);ctx.strokeStyle=ready?'#C6FF36':'#ffffff55';ctx.lineWidth=1;ctx.strokeRect(18,y-17,w-36,36);}ctx.fillStyle=col;ctx.textAlign='left';ctx.font=active?'bold 14px system-ui':'13px system-ui';ctx.fillText(`${d.name} · ${progress[d.id]||0}/3 turnos · ${voiceAccuracy(d.id)}`,28,y);if(active){ctx.textAlign='right';ctx.fillStyle=ready?'#C6FF36':'#f5f0e8';ctx.font='bold 11px system-ui';ctx.fillText(ready?'ACTIVA MICRÓFONO':'EN TURNO',w-28,y);}});
 }
 function finishByTime() {
-  if(mode==='tap') finishGame(pickWinner(d=>progress[d.id]||0),'tiempo');
-  else if(mode==='tilt') finishGame(pickWinner(d=>progress[d.id]||0),'tiempo');
+  if(mode==='tilt') finishGame(pickWinner(d=>progress[d.id]||0),'tiempo');
   else if(mode==='color') finishGame(pickWinner(d=>progress[d.id]||0),'tiempo');
 }
 function tick(now) {
@@ -455,13 +452,17 @@ function tick(now) {
       }
     }
   }
-  if(running&&mode==='color'&&now-targetChanged>=5000)advanceColorChallenge();
+  if(running&&mode==='color'){
+    const expired=colorHunt.tick(now);
+    if(expired){progress={...expired.scores};if(expired.done){setRound('Terminó la búsqueda del quinto color.');finishGame(expired.winner,'caza de cinco colores');}
+      else{colorIndex=expired.current.index;targetColor=expired.current.color;targetChanged=colorHunt.startedAt;for(const d of devices())command(d.id,{colorTarget:{name:targetColor.name}});setRound(`Se agotaron 5 segundos · ahora busca ${targetColor.name} (${colorIndex+1}/5)`);}}
+  }
   if(running&&mode==='voice'){
     if(voiceStage==='countdown'&&now>=voiceCountdownUntil){voiceStage='idle';voiceCountdownUntil=0;beginVoiceTurn();}
     else if(voiceStage!=='countdown'){
       if(voiceWaiting&&voiceStage==='sampleAck'&&now>=voiceCommandRetryAt){command(voiceCurrentId,{voiceTurn:{phase:'sample',soundIndex:voiceSoundIndex+1,soundKey:voiceSounds[voiceSoundIndex].seed,total:3}});voiceCommandRetryAt=now+1200;}
       if(voiceWaiting&&now>=voiceReadyDeadline)skipVoiceTurn(voiceStage==='userMic'?'No se activó el micrófono a tiempo.':'No se pudo preparar este turno.');
-      if(voiceCurrentId&&voiceStage==='sample'&&now>=voiceSampleEnd){voiceStage='userMic';voiceWaiting=true;voiceReadyDeadline=now+VOICE_PERMISSION_TIMEOUT;command(voiceCurrentId,{voiceTurn:{phase:'ready',soundIndex:voiceSoundIndex+1,seconds:VOICE_ATTEMPT_SECONDS}});setRound(`${tacto.devices[voiceCurrentId]?.name||'Jugador'}: la nota terminó; activa el micrófono para comenzar.`);}
+      if(voiceCurrentId&&voiceStage==='sample'&&now>=voiceSampleEnd){voiceChallenge.sampleFinished();voiceStage='userMic';voiceWaiting=true;voiceReadyDeadline=now+VOICE_PERMISSION_TIMEOUT;command(voiceCurrentId,{voiceTurn:{phase:'ready',soundIndex:voiceSoundIndex+1,seconds:VOICE_ATTEMPT_SECONDS}});setRound(`${tacto.devices[voiceCurrentId]?.name||'Jugador'}: la nota terminó; activa el micrófono para comenzar.`);}
       if(voiceListening&&now>=voiceTurnEnd)finishVoiceTurn();
       if(running&&!voiceCurrentId&&voiceNextAt&&now>=voiceNextAt){voiceNextAt=0;beginVoiceTurn();}
     }
