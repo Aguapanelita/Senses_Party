@@ -104,7 +104,7 @@ function command(id, payload) {
 function spinState(d) {
   const canSpin = !running && !championId && (spinTokens[d.id] || 0) > 0;
   const targets = spinTargets[d.id] || [];
-  command(d.id, { spinAvailable: canSpin, spinTokens: spinTokens[d.id] || 0,
+  command(d.id, { hostReady: true, spinAvailable: canSpin, spinTokens: spinTokens[d.id] || 0,
     sabotagePending: !!pendingSabotage[d.id], sabotageTargets: targets });
 }
 function updateAllSpinStates() { for (const d of devices()) spinState(d); }
@@ -113,7 +113,7 @@ function renderPlayers() {
   $('#players').innerHTML = all.length ? all.map(d => {
     const c = d.ch || {}, color = playerColor(d.id);
     const pts = scores[d.id] || 0, pct = Math.round(clamp(pts / CROWN_TARGET, 0, 1) * 100);
-    const shield = shields[d.id] || 0, games = mode === 'tap' ? `${Math.round((progress[d.id] || 0) * TAPS_TO_FINISH)}/${TAPS_TO_FINISH} toques`
+    const shield = shields[d.id] || 0, games = mode === 'tap' ? `${Math.min(TAPS_TO_FINISH, Math.round(progress[d.id] || 0))}/${TAPS_TO_FINISH} toques`
       : mode === 'tilt' ? `${fmt(progress[d.id] || 0)} s dentro de la barra`
       : mode === 'color' ? `${progress[d.id] || 0}/5 colores encontrados`
       : mode === 'voice' ? `${progress[d.id] || 0}/3 turnos · ${voiceAccuracy(d.id)}` : '';
