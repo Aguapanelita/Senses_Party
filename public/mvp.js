@@ -2,9 +2,9 @@
 const $ = s => document.querySelector(s);
 const canvas = $('#stage'), ctx = canvas.getContext('2d');
 const COLORS = ['#C6FF36', '#FF4D8D', '#37D9F2', '#FF9F43', '#9A72FF', '#F9E547'];
-const CROWN_TARGET = 5, TAPS_TO_FINISH = 8, SPIN_EVERY = 2;
+const CROWN_TARGET = 5, TAPS_TO_FINISH = 60, SPIN_EVERY = 2;
 const GAME_SECONDS = { tap: 45, tilt: 60, color: 30 };
-const VOICE_CUE_SECONDS = 1.15, VOICE_ATTEMPT_SECONDS = 5, VOICE_PERMISSION_TIMEOUT = 20000, VOICE_TURN_GAP = 700;
+const VOICE_CUE_SECONDS = 1.15, VOICE_ATTEMPT_SECONDS = 3, VOICE_PERMISSION_TIMEOUT = 20000, VOICE_TURN_GAP = 700;
 const VOICE_REGISTERS = [{ name:'grave', min:82, max:165 }, { name:'medio', min:210, max:370 }, { name:'agudo', min:510, max:850 }];
 const VOICE_WAVES = ['sine','triangle','square','sawtooth'];
 const VOICE_MODIFIERS = ['vibrato','tremolo','glide','harmonic','detune','none'];
@@ -135,10 +135,10 @@ function renderPlayers() {
 }
 function instructions() {
   const text = {
-    tap: `Cada toque hace avanzar tu barra. Llega a ${TAPS_TO_FINISH} toques; la ronda tiene un máximo de 45 segundos.`,
+    tap: `Cada toque hace avanzar tu barra. Llega a ${TAPS_TO_FINISH} toques para ganar. Puedes usar hasta tres dedos al mismo tiempo.`,
     tilt: 'Durante 60 segundos, inclina el teléfono para mantener tu marcador dentro de la franja verde móvil. Suma tiempo cada instante que permanezcas dentro; gana quien acumule más.',
     color: 'La partida pide 5 colores, uno a la vez. Cada color dura hasta 5 segundos; el primero en encontrarlo suma. En el teléfono verás la cámara y solo el nombre del color.',
-    voice: 'Cada jugador escucha una nota con el micrófono apagado. Cuando termina, activa el micrófono y tiene 5 segundos para imitarla. Un intento por nota; gana el promedio más acertado de las tres.',
+    voice: 'Cada jugador escucha la nota con el micrófono apagado. Cuando su nombre se ilumina, activa el micrófono y tiene 3 segundos para imitarla. Un intento por nota; gana el promedio más acertado de las tres.',
   };
   $('#instructions').textContent = text[mode];
   $('#modeName').textContent = ({tap:'Carrera de toques',tilt:'Torre en equilibrio',color:'Caza de colores',voice:'Acierta la nota'})[mode];
@@ -148,7 +148,7 @@ function start() {
   if (running || championId) return;
   const online = devices();
   if (!online.length) { setRound('Conecta al menos un teléfono.'); return; }
-  sequencePhase=sequenceActive?'playing':'idle';hideSequence();running = true; roundStart = performance.now(); roundEnd = mode === 'voice' ? 0 : roundStart + GAME_SECONDS[mode] * 1000;
+  sequencePhase=sequenceActive?'playing':'idle';hideSequence();running = true; roundStart = performance.now(); roundEnd = mode === 'voice' || mode === 'tap' ? 0 : roundStart + GAME_SECONDS[mode] * 1000;
   progress = {}; for (const d of online) progress[d.id] = 0;
   if (mode === 'tap') { /* keep the current contact set so a held finger cannot create a free tap */ }
   if (mode === 'color') { colorSequence = [...TARGET_COLORS].sort(() => Math.random() - .5).slice(0, 5); colorIndex = -1; advanceColorChallenge(); }
@@ -156,6 +156,7 @@ function start() {
   if (mode === 'voice') {
     voiceSounds=makeVoiceSounds();voiceOrder=online.map(d=>d.id);voiceResults={};for(const d of online)voiceResults[d.id]=[null,null,null];
     voiceSamples=[];voiceSoundIndex=0;voicePlayerIndex=0;voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceNextAt=0;voiceStage='idle';voiceSampleEnd=0;voiceCountdownUntil=0;prepareVoiceAudio();
+    for(const d of online)command(d.id,{voiceTurn:{phase:'waiting',message:'Espera a que tu nombre se ilumine para activar el micrófono.'}});
   }
   setRound(mode === 'tilt' ? 'Equilibrio: 60 s · usa solo el giroscopio para permanecer dentro de la franja verde' : mode === 'voice' ? 'Preparando sonidos nuevos para la partida…' : mode === 'color' ? `Color 1/5: ${targetColor.name} · encuéntralo en 5 segundos` : 'Ronda en curso');
   updateAllSpinStates(); renderPlayers();
@@ -203,7 +204,7 @@ function recordTapEvent(d, m) {
   const eventId=String(m?.eventId||'');
   if(!running||sequencePaused||mode!=='tap'||!eventId||tapEvents.has(eventId))return;
   tapEvents.add(eventId);if(tapEvents.size>512)tapEvents.delete(tapEvents.values().next().value);
-  const count=clamp(Math.floor(Number(m.count)||1),1,5);
+  const count=clamp(Math.floor(Number(m.count)||1),1,3);
   progress[d.id]=Math.min(TAPS_TO_FINISH,(progress[d.id]||0)+count);
   if(progress[d.id]>=TAPS_TO_FINISH)finishGame(d.id,'meta');
 }
@@ -234,9 +235,9 @@ function onData(d, kind, m) {
   else if (kind === 'action' && m?.action === 'spin') spin(d.id, Number(m.boxIndex)||0);
   else if (kind === 'action' && m?.action === 'tap') recordTapEvent(d,m);
   else if (kind === 'action' && m?.action === 'target') applySabotage(d.id, String(m.targetId || ''));
-  else if (kind === 'action' && m?.action === 'voiceSampleReady') voiceSampleReady(d.id);
-  else if (kind === 'action' && m?.action === 'voiceReady') voiceReady(d.id);
-  else if (kind === 'action' && m?.action === 'voiceDenied' && d.id===voiceCurrentId) skipVoiceTurn('No se autorizó el micrófono; se salta este intento.');
+  else if (kind === 'action' && m?.action === 'voiceSampleReady') voiceSampleReady(d.id,String(m.soundKey||''));
+  else if (kind === 'action' && m?.action === 'voiceReady') voiceReady(d.id,Number(m.soundIndex));
+  else if (kind === 'action' && m?.action === 'voiceDenied' && d.id===voiceCurrentId && Number(m.soundIndex)===voiceSoundIndex+1) skipVoiceTurn('No se autorizó el micrófono; se salta este intento.');
   renderPlayers();
 }
 function pickWinner(metric) {
@@ -380,18 +381,18 @@ function beginVoiceTurn() {
   if(voiceSoundIndex>=voiceSounds.length){finishVoiceRound();return;}
   const id=voiceOrder[voicePlayerIndex],d=tacto.devices[id];if(!d?.online){finishVoiceRound();return;}
   voiceCurrentId=id;voiceWaiting=true;voiceListening=false;voiceSamples=[];voiceSingStart=0;voiceSampleEnd=0;voiceStage='sampleAck';voiceReadyDeadline=performance.now()+VOICE_PERMISSION_TIMEOUT;voiceCommandRetryAt=performance.now()+1200;
-  command(id,{voiceTurn:{phase:'sample',soundIndex:voiceSoundIndex+1,total:3,sound:voiceSounds[voiceSoundIndex],duration:VOICE_CUE_SECONDS}});setRound(`${d.name}: escucha la nota ${voiceSoundIndex+1}/3; el micrófono está apagado.`);
+  command(id,{voiceTurn:{phase:'sample',soundIndex:voiceSoundIndex+1,soundKey:voiceSounds[voiceSoundIndex].seed,total:3,sound:voiceSounds[voiceSoundIndex],duration:VOICE_CUE_SECONDS}});setRound(`${d.name}: escucha la nota ${voiceSoundIndex+1}/3; el micrófono está apagado.`);
 }
-function voiceSampleReady(id) {
-  if(!running||sequencePaused||mode!=='voice'||!voiceWaiting||voiceStage!=='sampleAck'||id!==voiceCurrentId)return;
+function voiceSampleReady(id,soundKey) {
+  if(!running||sequencePaused||mode!=='voice'||!voiceWaiting||voiceStage!=='sampleAck'||id!==voiceCurrentId||soundKey!==voiceSounds[voiceSoundIndex]?.seed)return;
   voiceWaiting=false;voiceStage='sample';voiceCommandRetryAt=0;playVoiceSound(voiceSounds[voiceSoundIndex]);voiceSampleEnd=performance.now()+VOICE_CUE_SECONDS*1000+350;
   setRound(`${tacto.devices[id]?.name||'Jugador'}: escucha la nota ${voiceSoundIndex+1}/3.`);
 }
-function voiceReady(id) {
-  if(!running||sequencePaused||mode!=='voice'||!voiceWaiting||voiceStage!=='userMic'||id!==voiceCurrentId)return;
+function voiceReady(id,soundIndex) {
+  if(!running||sequencePaused||mode!=='voice'||!voiceWaiting||voiceStage!=='userMic'||id!==voiceCurrentId||soundIndex!==voiceSoundIndex+1)return;
   voiceWaiting=false;voiceListening=true;voiceStage='sing';voiceSingStart=performance.now();voiceTurnEnd=voiceSingStart+VOICE_ATTEMPT_SECONDS*1000;
   command(id,{voiceTurn:{phase:'sing',soundIndex:voiceSoundIndex+1,seconds:VOICE_ATTEMPT_SECONDS}});
-  setRound(`${tacto.devices[id]?.name||'Jugador'}: imita la nota ${voiceSoundIndex+1}/3 durante 5 segundos.`);
+  setRound(`${tacto.devices[id]?.name||'Jugador'}: imita la nota ${voiceSoundIndex+1}/3 durante 3 segundos.`);
 }
 function recordVoiceSample(d,m) {
   if(!running||sequencePaused||mode!=='voice'||!voiceListening||d.id!==voiceCurrentId)return;
@@ -406,15 +407,15 @@ function advanceVoiceCursor() {
 function finishVoiceTurn() {
   if(!voiceCurrentId)return;const id=voiceCurrentId,vals=voiceSamples.slice();voiceResults[id][voiceSoundIndex]=vals.length?vals.reduce((s,x)=>s+x,0)/vals.length:Infinity;progress[id]=voiceSoundIndex+1;
   const score=voiceResults[id][voiceSoundIndex],message=Number.isFinite(score)?`Intento ${voiceSoundIndex+1}/3 registrado · ${Math.round(score)} cents de desviación.`:`No se detectó una voz clara en el intento ${voiceSoundIndex+1}/3.`;
-  command(id,{voiceTurn:{phase:'off',message}});advanceVoiceCursor();renderPlayers();
+  command(id,{voiceTurn:{phase:'waiting',message:'Turno terminado. Espera a que tu nombre vuelva a iluminarse.'}});advanceVoiceCursor();renderPlayers();
 }
 function skipVoiceTurn(message) {
-  if(!voiceCurrentId)return;const id=voiceCurrentId;voiceResults[id][voiceSoundIndex]=Infinity;progress[id]=voiceSoundIndex+1;command(id,{voiceTurn:{phase:'off',message}});advanceVoiceCursor();renderPlayers();
+  if(!voiceCurrentId)return;const id=voiceCurrentId;voiceResults[id][voiceSoundIndex]=Infinity;progress[id]=voiceSoundIndex+1;command(id,{voiceTurn:{phase:'waiting',message:`${message} Espera a que vuelva a iluminarse tu nombre.`}});advanceVoiceCursor();renderPlayers();
 }
-function cancelVoiceTurn(message='Partida terminada.') { if(voiceCurrentId)command(voiceCurrentId,{voiceTurn:{phase:'off',message}});voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceSampleEnd=0;voiceCommandRetryAt=0;voiceStage='idle';voiceNextAt=0; }
+function cancelVoiceTurn(message='Partida terminada.') { for(const id of voiceOrder)command(id,{voiceTurn:{phase:'off',message}});voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceSingStart=0;voiceSampleEnd=0;voiceCommandRetryAt=0;voiceStage='idle';voiceNextAt=0;voiceCountdownUntil=0; }
 function finishVoiceRound() {
   const eligible=voiceOrder.filter(id=>(voiceResults[id]||[]).length===3&&voiceResults[id].every(Number.isFinite)).map(id=>({id,score:voiceResults[id].reduce((s,x)=>s+x,0)/3})).sort((a,b)=>a.score-b.score);
-  let winner=null;if(eligible.length)winner=eligible.length>1&&Math.abs(eligible[0].score-eligible[1].score)<3?null:eligible[0].id;finishGame(winner,'tres sonidos');
+  let winner=null;if(eligible.length)winner=eligible.length>1&&Math.abs(eligible[0].score-eligible[1].score)<3?null:eligible[0].id;for(const id of voiceOrder)command(id,{voiceTurn:{phase:'off',message:'Las tres notas terminaron.'}});finishGame(winner,'tres sonidos');
 }
 function drawVoice(ds,w,h) {
   ctx.textAlign='center';ctx.fillStyle='#f5f0e8';ctx.font='bold 20px system-ui';ctx.fillText('Acierta el sonido · 3 sonidos únicos',w/2,34);
@@ -422,10 +423,10 @@ function drawVoice(ds,w,h) {
     if(!running){ctx.fillStyle='#b8b3c3';ctx.font='14px system-ui';ctx.fillText('Inicia la partida para escuchar sonidos nuevos.',w/2,68);}
     else if(voiceStage==='countdown'){const n=Math.max(1,Math.ceil((voiceCountdownUntil-performance.now())/1000));ctx.fillStyle='#b8b3c3';ctx.font='bold 24px system-ui';ctx.fillText(`La primera nota suena en ${n}…`,w/2,78);}
   else if(current){ctx.fillStyle=playerColor(current.id);ctx.font='bold 17px system-ui';ctx.fillText(`${current.name} · nota ${voiceSoundIndex+1}/3`,w/2,72);let status='Preparando el turno…',fraction=0;
-    if(voiceStage==='sample')status='Escucha la nota de muestra…';else if(voiceStage==='userMic')status='La nota terminó · activa el micrófono en tu teléfono';else if(voiceListening){const left=Math.max(0,(voiceTurnEnd-performance.now())/1000),live=voiceSamples.length?Math.round(voiceSamples.reduce((sum,value)=>sum+value,0)/voiceSamples.length):null;status=`¡Imita ahora! · ${left.toFixed(1)} s${live==null?'':` · ±${live} cents`}`;fraction=1-left/VOICE_ATTEMPT_SECONDS;}
+    if(voiceStage==='sample')status='Escucha la nota de muestra…';else if(voiceStage==='userMic')status=`${current.name}: activa el micrófono ahora`;else if(voiceListening){const left=Math.max(0,(voiceTurnEnd-performance.now())/1000),live=voiceSamples.length?Math.round(voiceSamples.reduce((sum,value)=>sum+value,0)/voiceSamples.length):null;status=`${current.name} canta · ${left.toFixed(1)} s${live==null?'':` · ±${live} cents`}`;fraction=1-left/VOICE_ATTEMPT_SECONDS;}
     ctx.fillStyle='#b8b3c3';ctx.font='14px system-ui';ctx.fillText(status,w/2,105);ctx.fillStyle='#42415b';ctx.fillRect(28,125,w-56,16);ctx.fillStyle=playerColor(current.id);ctx.fillRect(28,125,(w-56)*clamp(fraction,0,1),16);
   }else{ctx.fillStyle='#b8b3c3';ctx.font='14px system-ui';ctx.fillText('Preparando el siguiente turno…',w/2,76);}
-  const top=170,row=Math.min(48,(h-top-8)/Math.max(1,ds.length));ds.forEach((d,i)=>{const y=top+i*row;ctx.fillStyle=playerColor(d.id);ctx.textAlign='left';ctx.font='13px system-ui';ctx.fillText(`${d.name} · ${progress[d.id]||0}/3 turnos · ${voiceAccuracy(d.id)}`,28,y);});
+  const top=170,row=Math.min(48,(h-top-8)/Math.max(1,ds.length));ds.forEach((d,i)=>{const y=top+i*row,ready=d.id===voiceCurrentId&&voiceStage==='userMic',singing=d.id===voiceCurrentId&&voiceListening,active=ready||singing,col=playerColor(d.id);if(active){ctx.fillStyle=ready?'#c6ff3624':'#ffffff12';ctx.fillRect(18,y-17,w-36,36);ctx.strokeStyle=ready?'#C6FF36':'#ffffff55';ctx.lineWidth=1;ctx.strokeRect(18,y-17,w-36,36);}ctx.fillStyle=col;ctx.textAlign='left';ctx.font=active?'bold 14px system-ui':'13px system-ui';ctx.fillText(`${d.name} · ${progress[d.id]||0}/3 turnos · ${voiceAccuracy(d.id)}`,28,y);if(active){ctx.textAlign='right';ctx.fillStyle=ready?'#C6FF36':'#f5f0e8';ctx.font='bold 11px system-ui';ctx.fillText(ready?'ACTIVA MICRÓFONO':'EN TURNO',w-28,y);}});
 }
 function finishByTime() {
   if(mode==='tap') finishGame(pickWinner(d=>progress[d.id]||0),'tiempo');
@@ -454,7 +455,7 @@ function tick(now) {
   if(running&&mode==='voice'){
     if(voiceStage==='countdown'&&now>=voiceCountdownUntil){voiceStage='idle';voiceCountdownUntil=0;beginVoiceTurn();}
     else if(voiceStage!=='countdown'){
-      if(voiceWaiting&&voiceStage==='sampleAck'&&now>=voiceCommandRetryAt){command(voiceCurrentId,{voiceTurn:{phase:'sample',soundIndex:voiceSoundIndex+1,total:3,sound:voiceSounds[voiceSoundIndex],duration:VOICE_CUE_SECONDS}});voiceCommandRetryAt=now+1200;}
+      if(voiceWaiting&&voiceStage==='sampleAck'&&now>=voiceCommandRetryAt){command(voiceCurrentId,{voiceTurn:{phase:'sample',soundIndex:voiceSoundIndex+1,soundKey:voiceSounds[voiceSoundIndex].seed,total:3,sound:voiceSounds[voiceSoundIndex],duration:VOICE_CUE_SECONDS}});voiceCommandRetryAt=now+1200;}
       if(voiceWaiting&&now>=voiceReadyDeadline)skipVoiceTurn(voiceStage==='userMic'?'No se activó el micrófono a tiempo.':'No se pudo preparar este turno.');
       if(voiceCurrentId&&voiceStage==='sample'&&now>=voiceSampleEnd){voiceStage='userMic';voiceWaiting=true;voiceReadyDeadline=now+VOICE_PERMISSION_TIMEOUT;command(voiceCurrentId,{voiceTurn:{phase:'ready',soundIndex:voiceSoundIndex+1,seconds:VOICE_ATTEMPT_SECONDS}});setRound(`${tacto.devices[voiceCurrentId]?.name||'Jugador'}: la nota terminó; activa el micrófono para comenzar.`);}
       if(voiceListening&&now>=voiceTurnEnd)finishVoiceTurn();
