@@ -126,7 +126,8 @@ function spinState(d) {
 function updateAllSpinStates() { for (const d of devices()) spinState(d); }
 function renderPlayers() {
   const all = Object.values(tacto?.devices || {}), online = all.filter(d => d.online);
-  $('#players').innerHTML = all.length ? all.map(d => {
+  // el panel de sensores (que es pesado de reconstruir) solo se actualiza si está abierto
+  if ($('.sensor-details')?.open) $('#players').innerHTML = all.length ? all.map(d => {
     const c = d.ch || {}, color = playerColor(d.id);
     const pts = scores[d.id] || 0, pct = Math.round(clamp(pts / CROWN_TARGET, 0, 1) * 100);
     const shield = shields[d.id] || 0, games = mode === 'tap' ? `${Math.min(TAPS_TO_FINISH, Math.round(progress[d.id] || 0))}/${TAPS_TO_FINISH} toques`
@@ -150,7 +151,7 @@ function renderPlayers() {
 }
 function instructions() {
   const text = {
-    tap: `Cada toque hace avanzar tu barra. Llega a ${TAPS_TO_FINISH} toques para ganar. Puedes usar hasta tres dedos al mismo tiempo.`,
+    tap: `Cada toque hace avanzar tu barra. Llega a ${TAPS_TO_FINISH} toques para ganar. Usa todos los dedos que quieras: cada dedo nuevo suma un toque.`,
     tilt: 'Durante 60 segundos, inclina el teléfono para mantener tu marcador dentro de la franja verde móvil. Suma tiempo cada instante que permanezcas dentro; gana quien acumule más.',
     color: 'La partida pide 5 colores, uno a la vez. Cada color dura hasta 5 segundos; el primero en encontrarlo suma. En el teléfono verás la cámara y solo el nombre del color.',
     voice: 'Cada jugador escucha la nota con el micrófono apagado. Cuando su nombre se ilumina, activa el micrófono y tiene 3 segundos para imitarla. Un intento por nota; gana el promedio más acertado de las tres.',
@@ -172,7 +173,7 @@ function start() {
   sequencePhase=sequenceActive?'playing':'idle';hideSequence();running = true; roundStart = performance.now(); roundEnd = mode === 'tilt' ? roundStart + GAME_SECONDS.tilt * 1000 : 0;
   progress = {}; for (const d of online) progress[d.id] = 0;
   if (mode === 'tap') {
-    progress = tapRace.start(online.map(d => d.id)).progress;
+    progress = tapRace.start(online.map(d => d.id)).progress; tapShown = {}; tapFlash = {};
     for (const d of online) command(d.id, { tapMode: true, tapProgress: 0, tapTarget: TAPS_TO_FINISH, reset: true });
   }
   if (mode === 'color') {
@@ -265,7 +266,7 @@ function recordTapEvent(d, m) {
   tapRace.join(d.id); // si llegó tarde o se reconectó, se suma a la carrera en vez de ignorar sus toques
   const result=tapRace.tap(d.id,eventId,m?.count);
   if(!result.accepted)return;
-  progress[d.id]=result.progress;
+  progress[d.id]=result.progress;tapFlash[d.id]=performance.now();
   command(d.id,{tapMode:tapRace.running,tapProgress:result.progress,tapTarget:TAPS_TO_FINISH});
   if(result.winner)finishGame(result.winner,'100 toques');
 }
@@ -393,6 +394,42 @@ function drawBalance(ds,w,h) {
     ctx.fillStyle='#f5f0e8';ctx.textAlign='left';ctx.font='13px system-ui';ctx.fillText(`${d.name} · ${(progress[d.id]||0).toFixed(1)} s`,x0,y-17);
   });
 }
+// ---------- Carrera de toques: dibujo en la pantalla principal ----------
+// Por cada jugador: nombre, "tacto: true/false" con los dedos apoyados en vivo,
+// y una barra con el porcentaje de 0 % a 100 % (toques del jugador / 100).
+let tapShown = {}, tapFlash = {}; // tapShown = avance que se DIBUJA (sigue suavemente al real); tapFlash = hora del último toque aceptado
+function updateTapShown(dt) { // se llama en cada cuadro desde tick(): desliza la barra hacia el valor real
+  for (const d of devices()) {
+    const target = clamp((progress[d.id] || 0) / TAPS_TO_FINISH, 0, 1), shown = tapShown[d.id] ?? target;
+    tapShown[d.id] = Math.abs(target - shown) < .001 ? target : shown + (target - shown) * (1 - Math.exp(-dt * 14));
+  }
+}
+function drawTapRace(ds,w,h) {
+  const now=performance.now();
+  ctx.fillStyle='#f5f0e8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText(`CARRERA DE TOQUES · EL PRIMERO EN LLEGAR A ${TAPS_TO_FINISH} GANA`,w/2,34);
+  ctx.fillStyle='#b8b3c3';ctx.font='12px system-ui';ctx.fillText(running?'¡Toca tu teléfono lo más rápido que puedas! Cada dedo nuevo suma un toque':'Toca tu teléfono para probar que tu tacto llega · luego pulsa "Iniciar ronda"',w/2,55);
+  const top=74,row=Math.min(84,(h-top-8)/ds.length),x0=24,barW=w-48,barH=Math.min(30,row*.42);
+  ds.forEach((d,i)=>{
+    const y=top+i*row,col=playerColor(d.id);
+    const fingers=Math.max(0,Math.round(Number(d.ch['touch.n'])||0)),touching=fingers>0;
+    const shown=tapShown[d.id]??0,pct=Math.round(shown*100);
+    const flash=Math.max(0,1-(now-(tapFlash[d.id]||0))/220); // 1 justo al tocar → 0 en 220 ms
+    // fila superior: nombre a la izquierda, estado del tacto a la derecha
+    ctx.textAlign='left';ctx.fillStyle='#f5f0e8';ctx.font='bold 14px system-ui';ctx.fillText(d.name,x0,y+16);
+    ctx.textAlign='right';ctx.font='bold 12px ui-monospace,monospace';
+    ctx.fillStyle=touching?'#C6FF36':'#77748c';
+    ctx.fillText(touching?`TACTO: TRUE · ${fingers} DEDO${fingers>1?'S':''}`:'TACTO: FALSE',w-x0,y+16);
+    // barra de avance
+    const by=y+24;
+    ctx.fillStyle='#242438';ctx.fillRect(x0,by,barW,barH);
+    ctx.fillStyle=col;ctx.fillRect(x0,by,barW*shown,barH);
+    if(flash>0){ctx.fillStyle=`rgba(255,255,255,${.35*flash})`;ctx.fillRect(x0,by,barW*shown,barH);} // brillo con cada toque
+    ctx.lineWidth=touching?2:1;ctx.strokeStyle=touching?'#C6FF36':'#515a69';ctx.strokeRect(x0,by,barW,barH);
+    // porcentaje grande dentro de la barra
+    ctx.textAlign='right';ctx.font=`bold ${Math.round(barH*.62)}px system-ui`;
+    ctx.fillStyle=shown>.85?'#11111b':'#f5f0e8';ctx.fillText(`${pct}%`,x0+barW-10,by+barH*.72);
+  });
+}
 function draw() {
   const w=canvas.clientWidth,h=canvas.clientHeight;ctx.clearRect(0,0,w,h);ctx.fillStyle='#11111b';ctx.fillRect(0,0,w,h);
   const ds=devices();
@@ -403,10 +440,7 @@ function draw() {
     ctx.fillStyle='#f5f0e8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText('CAZA DE COLORES · ACTIVEN LA CÁMARA',w/2,34);
     ctx.fillStyle='#b8b3c3';ctx.font='12px system-ui';ctx.fillText(`Toca "Activar cámara" en tu teléfono · empieza en ${n} s`,w/2,55);
   }else if(mode==='color'){ctx.fillStyle='#f5f0e8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText(`COLOR ${Math.max(1,colorIndex+1)}/5 · ${targetColor.name.toUpperCase()}`,w/2,34);ctx.fillStyle='#b8b3c3';ctx.font='12px system-ui';ctx.fillText(`El primero en encontrarlo suma · ${Math.max(0,5-(performance.now()-targetChanged)/1000).toFixed(1)} s`,w/2,55);}
-  if(mode==='tap'){ // título e instrucción de la carrera, igual que en los otros minijuegos
-    ctx.fillStyle='#f5f0e8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText(`CARRERA DE TOQUES · EL PRIMERO EN LLEGAR A ${TAPS_TO_FINISH} GANA`,w/2,34);
-    ctx.fillStyle='#b8b3c3';ctx.font='12px system-ui';ctx.fillText(running?'Toca la pantalla de tu teléfono lo más rápido que puedas (hasta 3 dedos a la vez)':'Pulsa "Iniciar ronda" para comenzar',w/2,55);
-  }
+  if(mode==='tap'){drawTapRace(ds,w,h);return;}
   if(mode==='voice'){drawVoice(ds,w,h);return;}
   const row=Math.min(68,(h-90)/ds.length),top=76;
   ds.forEach((d,i)=>{
@@ -514,15 +548,18 @@ function tick(now) {
   if(sequenceActive&&!sequencePaused&&sequencePhase==='results'&&now>=sequenceUntil){prepareSequenceGame();}
   if(sequenceActive&&!sequencePaused&&sequencePhase==='instructions'&&now>=sequenceUntil){sequencePhase='countdown';sequenceUntil=now+3000;showSequence('Prepárate','3','CUENTA REGRESIVA',false);}
   if(sequenceActive&&!sequencePaused&&sequencePhase==='countdown'){const n=Math.max(1,Math.ceil((sequenceUntil-now)/1000));$('#sequenceTitle').textContent=String(n);if(now>=sequenceUntil){hideSequence();if(!start())sequenceStartFailed();}}
+  if(mode==='tap')updateTapShown(dt); // barras de la carrera: avance suave
   if(sequencePaused){draw();requestAnimationFrame(tick);return;}
   if(running&&roundEnd>0&&now>=roundEnd){finishByTime();}
   if(running&&mode==='tilt'){
     const elapsed=(now-roundStart)/1000,{center,width}=balanceZoneAt(elapsed);
     for(const d of devices()){
       const angle=d.ch['ang.g'];
-      if(angle!=null&&performance.now()-(d.last||0)<160){
+      // Se acepta un dato de giro de hasta 500 ms (antes 160 ms: con un pequeño retraso el marcador se congelaba).
+      if(angle!=null&&now-(d.seen?.motion||0)<500){
         const raw=clamp(.5+(angle-(balanceNeutral[d.id]??0))/90,0,1),prev=balanceX[d.id]??.5;
-        const x=prev+(raw-prev)*(1-Math.exp(-dt*20));balanceX[d.id]=x;
+        // Suavizado: el marcador se DESLIZA hacia el dato nuevo en ~120 ms (antes casi de golpe → se veían tirones).
+        const x=prev+(raw-prev)*(1-Math.exp(-dt*8));balanceX[d.id]=x;
         if(Math.abs(x-center)<=width/2)progress[d.id]=(progress[d.id]||0)+dt;
       }
     }
@@ -553,7 +590,9 @@ function tick(now) {
   }
   draw();
   // Paneles HTML: se redibujan solo si hay datos nuevos (máx. ~6 veces/s) y, por si acaso, al menos 1 vez por segundo.
-  if((hudDirty&&now-lastHud>150)||now-lastHud>1000){lastHud=now;renderPlayers();}
+  // Durante un minijuego, máximo 2 veces por segundo, para que la animación del escenario no dé tirones.
+  const hudEvery=running?500:150;
+  if((hudDirty&&now-lastHud>hudEvery)||now-lastHud>1000){lastHud=now;renderPlayers();}
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
