@@ -100,8 +100,13 @@ const fmt = v => v == null || !Number.isFinite(Number(v)) ? '—' : Number(v).to
 function setRound(text) { const node=$('#roundText'); if(node)node.textContent=text; }
 function size() {
   const r = canvas.getBoundingClientRect(), d = devicePixelRatio || 1;
-  canvas.width = r.width * d; canvas.height = r.height * d; ctx.setTransform(d, 0, 0, d, 0, 0);
+  const w = Math.round(r.width * d), h = Math.round(r.height * d);
+  if (canvas.width === w && canvas.height === h) return; // mismo tamaño: no reiniciar el canvas (eso provoca un parpadeo)
+  canvas.width = w; canvas.height = h; ctx.setTransform(d, 0, 0, d, 0, 0);
 }
+// Cambia el HTML de un elemento SOLO si el contenido es distinto. Reescribir un panel igual
+// obliga al navegador a recalcular la página y produce pequeños tirones en la animación.
+function setHTML(sel, html) { const el = $(sel); if (el && el._html !== html) { el.innerHTML = html; el._html = html; } }
 addEventListener('resize', size); size();
 // ResizeObserver avisa cada vez que la caja del escenario cambia de tamaño (modo proyección, textos que crecen…),
 // no solo cuando cambia la ventana. Así el dibujo nunca queda estirado ni cortado.
@@ -127,7 +132,7 @@ function updateAllSpinStates() { for (const d of devices()) spinState(d); }
 function renderPlayers() {
   const all = Object.values(tacto?.devices || {}), online = all.filter(d => d.online);
   // el panel de sensores (que es pesado de reconstruir) solo se actualiza si está abierto
-  if ($('.sensor-details')?.open) $('#players').innerHTML = all.length ? all.map(d => {
+  if ($('.sensor-details')?.open) setHTML('#players', all.length ? all.map(d => {
     const c = d.ch || {}, color = playerColor(d.id);
     const pts = scores[d.id] || 0, pct = Math.round(clamp(pts / CROWN_TARGET, 0, 1) * 100);
     const shield = shields[d.id] || 0, games = mode === 'tap' ? `${Math.min(TAPS_TO_FINISH, Math.round(progress[d.id] || 0))}/${TAPS_TO_FINISH} toques`
@@ -135,15 +140,15 @@ function renderPlayers() {
       : mode === 'color' ? `${progress[d.id] || 0}/5 colores encontrados`
       : mode === 'voice' ? `${progress[d.id] || 0}/3 turnos · ${voiceAccuracy(d.id)}` : '';
     return `<article class="player ${d.online ? '' : 'off'}"><h3><span style="color:${color}">● ${esc(d.name)}</span><span>${pts}/${CROWN_TARGET} 👑</span></h3><div class="crown-meter" aria-label="${pct}% del camino a la corona"><i style="width:${pct}%;background:${color}"></i></div><p class="tiny game-progress">${games}${shield ? ` · 🛡 ${shield}` : ''}</p><div class="values"><span>Tacto X <b>${fmt(c['touch.x'])}</b></span><span>Tacto Y <b>${fmt(c['touch.y'])}</b></span><span>Giro γ <b>${fmt(c['ang.g'])}°</b></span><span>Giro β <b>${fmt(c['ang.b'])}°</b></span><span>Voz <b>${c['mic.pitch'] ? Math.round(c['mic.pitch']) + ' Hz' : '—'}</b></span><span>Cámara <b>${c['cam.sat'] > 0.25 ? 'color' : '—'}</b></span></div></article>`;
-  }).join('') : '<p class="tiny">Esperando teléfonos…</p>';
+  }).join('') : '<p class="tiny">Esperando teléfonos…</p>');
   const ranked = online.slice().sort((a,b)=>(scores[b.id]||0)-(scores[a.id]||0));
   const topScore = ranked.length ? scores[ranked[0].id]||0 : 0;
   const leaders = topScore ? ranked.filter(d=>(scores[d.id]||0)===topScore) : [];
   const leaderId = leaders.length===1 ? leaders[0].id : null;
-  $('#projectedScoreboard').innerHTML = online.length ? online.slice(0,4).map(d => `<div class="score-slot" style="--player-color:${playerColor(d.id)}"><i class="score-color"></i><span class="score-slot-copy"><span class="score-slot-name">${esc(d.name)}</span><span class="score-slot-value">${scores[d.id]||0} / ${CROWN_TARGET}</span></span>${leaderId===d.id?'<span class="score-slot-lead">LÍDER</span>':''}</div>`).join('') + (online.length>4?`<span class="score-empty">+${online.length-4} jugadores conectados</span>`:'') : '<div class="score-empty">Esperando jugadores</div>';
-  $('#scoreboard').innerHTML = online.length ? online.map(d => `<div style="padding:4px;color:${playerColor(d.id)}">${esc(d.name)} · ${scores[d.id] || 0}/${CROWN_TARGET} para la corona${leaderId===d.id?' · LÍDER':''}${shields[d.id] ? ` · 🛡 ${shields[d.id]}` : ''}</div>`).join('') : 'Sin jugadores conectados';
+  setHTML('#projectedScoreboard', online.length ? online.slice(0,4).map(d => `<div class="score-slot" style="--player-color:${playerColor(d.id)}"><i class="score-color"></i><span class="score-slot-copy"><span class="score-slot-name">${esc(d.name)}</span><span class="score-slot-value">${scores[d.id]||0} / ${CROWN_TARGET}</span></span>${leaderId===d.id?'<span class="score-slot-lead">LÍDER</span>':''}</div>`).join('') + (online.length>4?`<span class="score-empty">+${online.length-4} jugadores conectados</span>`:'') : '<div class="score-empty">Esperando jugadores</div>');
+  setHTML('#scoreboard', online.length ? online.map(d => `<div style="padding:4px;color:${playerColor(d.id)}">${esc(d.name)} · ${scores[d.id] || 0}/${CROWN_TARGET} para la corona${leaderId===d.id?' · LÍDER':''}${shields[d.id] ? ` · 🛡 ${shields[d.id]}` : ''}</div>`).join('') : 'Sin jugadores conectados');
   $('#crownStatus').textContent = championId ? `👑 ${tacto.devices[championId]?.name || 'Campeón'}` : `CORONA · ${CROWN_TARGET} PUNTOS`;
-  $('#arenaTitle').innerHTML = running ? `<span class="title-accent">${esc(({tap:'CARRERA DE TOQUES',tilt:'TORRE EN EQUILIBRIO',color:'CAZA DE COLORES',voice:'ACIERTA LA NOTA'})[mode])}</span>` : `SALA <span class="title-accent">LISTA</span>`;
+  setHTML('#arenaTitle', running ? `<span class="title-accent">${esc(({tap:'CARRERA DE TOQUES',tilt:'TORRE EN EQUILIBRIO',color:'CAZA DE COLORES',voice:'ACIERTA LA NOTA'})[mode])}</span>` : `SALA <span class="title-accent">LISTA</span>`);
   $('#roomDuplicate').textContent=room.toUpperCase();
   $('#start').disabled = running || !!championId || sequenceActive;
   $('#mode').disabled = running || sequenceActive;
@@ -181,7 +186,7 @@ function start() {
     // En el campeonato la cámara ya se pidió durante las instrucciones; en modo individual damos 5 s.
     if (sequenceActive) beginColorHunt(); else colorCountdownUntil = performance.now() + COLOR_COUNTDOWN_MS;
   }
-  if (mode === 'tilt') { balanceNeutral = {}; balanceX = {}; for (const d of online) { balanceNeutral[d.id] = d.ch['ang.g'] ?? 0; balanceX[d.id] = .5; } }
+  if (mode === 'tilt') { balanceNeutral = {}; balanceX = {}; for (const d of online) { balanceNeutral[d.id] = sampleGamma(d.id) ?? d.ch['ang.g'] ?? 0; balanceX[d.id] = .5; } }
   if (mode === 'voice') {
     voiceSounds=makeVoiceSounds();voiceOrder=online.map(d=>d.id);voiceChallenge.start(voiceOrder,voiceSounds);voiceResults=voiceChallenge.results;
     voiceSamples=[];voiceSoundIndex=0;voicePlayerIndex=0;voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceNextAt=0;voiceStage='idle';voiceSampleEnd=0;voiceCountdownUntil=0;prepareVoiceAudio();
@@ -284,7 +289,7 @@ function onData(d, kind, m) {
   if (kind === 'touch') recordTap(d, m);
   else if (kind === 'cam') checkColorMatch(d, m);
   else if (kind === 'mic') recordVoiceSample(d,m);
-  else if (kind === 'motion') { /* flattened channels stay in d.ch */ }
+  else if (kind === 'motion') recordMotion(d, m); // además de d.ch, guardamos el giro con su hora para interpolarlo
   else if (kind === 'action' && m?.action === 'spin') spin(d.id, Number(m.boxIndex)||0);
   else if (kind === 'action' && m?.action === 'tap') recordTapEvent(d,m);
   else if (kind === 'action' && m?.action === 'target') applySabotage(d.id, String(m.targetId || ''));
@@ -371,6 +376,41 @@ function updateRoomFromURL() {
   const q = new URLSearchParams(location.search).get('sala');
   if (q && q.length >= 4) tacto.cambiarSala(q);
   room = tacto.sala; showRoom();
+}
+// ---------- Búfer de interpolación del giro (Torre en equilibrio) ----------
+// Por la red, los datos de giro llegan a ráfagas (varios juntos y luego una pausa). Si el marcador
+// sigue ese ritmo, da tirones. Solución típica de los juegos en red: cada dato trae la hora en que el
+// sensor lo midió (m.t); guardamos los últimos datos y mostramos el movimiento con un pequeño retraso
+// fijo, calculando los puntos intermedios entre dos mediciones. Así el movimiento sale continuo.
+const MOTION_DELAY_MS = 120;   // retraso de reproducción: absorbe las ráfagas de la red
+const motionBuf = {};          // id del jugador -> { samples: [{t, g}], off }
+function recordMotion(d, m) {
+  if (!Array.isArray(m?.a)) return;
+  const t = Number(m.t), gamma = Number(m.a[2]);
+  if (!Number.isFinite(t) || !Number.isFinite(gamma)) return;
+  const b = (motionBuf[d.id] ||= { samples: [], off: null });
+  const last = b.samples[b.samples.length - 1];
+  if (last && t <= last.t) return; // dato repetido o que llegó desordenado
+  // "off" = diferencia entre el reloj de la pantalla y el del celular (incluye el viaje por la red).
+  // Nos quedamos con la menor (el mensaje que llegó más rápido) y la dejamos subir muy despacio
+  // por si alguno de los relojes se ajusta.
+  const off = Date.now() - t;
+  b.off = b.off == null ? off : Math.min(off, b.off + 0.1);
+  b.samples.push({ t, g: gamma });
+  if (b.samples.length > 90) b.samples.shift();
+}
+function sampleGamma(id) { // giro γ del jugador en este instante, interpolado entre dos mediciones
+  const b = motionBuf[id]; if (!b || !b.samples.length) return null;
+  const s = b.samples, at = Date.now() - b.off - MOTION_DELAY_MS; // la "hora del celular" que vamos a mostrar
+  if (at <= s[0].t) return s[0].g;
+  for (let i = s.length - 1; i > 0; i--) {
+    if (s[i - 1].t <= at) {
+      if (at >= s[i].t) return s[i].g; // aún no llega un dato más nuevo: mantenemos el último
+      const k = (at - s[i - 1].t) / (s[i].t - s[i - 1].t);
+      return s[i - 1].g + (s[i].g - s[i - 1].g) * k;
+    }
+  }
+  return s[s.length - 1].g;
 }
 function hueDistance(a,b) { return Math.abs(((a-b+540)%360)-180); }
 function balanceZoneAt(elapsed) {
@@ -554,12 +594,12 @@ function tick(now) {
   if(running&&mode==='tilt'){
     const elapsed=(now-roundStart)/1000,{center,width}=balanceZoneAt(elapsed);
     for(const d of devices()){
-      const angle=d.ch['ang.g'];
-      // Se acepta un dato de giro de hasta 500 ms (antes 160 ms: con un pequeño retraso el marcador se congelaba).
-      if(angle!=null&&now-(d.seen?.motion||0)<500){
+      const angle=sampleGamma(d.id); // giro interpolado (ver "Búfer de interpolación del giro")
+      // Se acepta mientras hayan llegado datos de giro en los últimos 600 ms.
+      if(angle!=null&&now-(d.seen?.motion||0)<600){
         const raw=clamp(.5+(angle-(balanceNeutral[d.id]??0))/90,0,1),prev=balanceX[d.id]??.5;
-        // Suavizado: el marcador se DESLIZA hacia el dato nuevo en ~120 ms (antes casi de golpe → se veían tirones).
-        const x=prev+(raw-prev)*(1-Math.exp(-dt*8));balanceX[d.id]=x;
+        // La interpolación ya da un movimiento continuo; este suavizado corto solo quita el temblor del sensor.
+        const x=prev+(raw-prev)*(1-Math.exp(-dt*25));balanceX[d.id]=x;
         if(Math.abs(x-center)<=width/2)progress[d.id]=(progress[d.id]||0)+dt;
       }
     }
