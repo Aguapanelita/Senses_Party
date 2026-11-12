@@ -23,6 +23,12 @@
       this.running = Object.keys(this.progress).length > 0;
       return this.snapshot();
     }
+    // Permite sumarse a una carrera ya iniciada (jugador que llega tarde o se reconecta).
+    join(playerId) {
+      if (!this.running || !playerId || playerId in this.progress) return false;
+      this.progress[playerId] = 0;
+      return true;
+    }
     tap(playerId, eventId, fingers = 1) {
       if (!this.running || !(playerId in this.progress) || !eventId) return { accepted: false, reason: 'inactive' };
       const key = `${playerId}:${eventId}`;

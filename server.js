@@ -20,10 +20,12 @@ const PLAIN_HTTP = process.env.HTTP === '1';        // para túneles / hosting q
 const MQTT_TCP = process.env.MQTT_TCP === undefined ? 1883 : +process.env.MQTT_TCP; // 0 = sin puerto TCP
 const PUBLIC_URL = process.env.PUBLIC_URL || '';
 
-const LAN = [];
-for (const list of Object.values(os.networkInterfaces()))
-  for (const i of list || []) if (i.family === 'IPv4' && !i.internal) LAN.push(i.address);
-const HOST_IP = process.env.HOST_IP || LAN[0] || 'localhost'; // con varios adaptadores (hotspot, USB, WiFi) fuerza cuál usar
+const LAN = [], PREFERRED = [];
+// Adaptadores virtuales (WSL, Hyper-V, VirtualBox, VMware, Docker): los teléfonos no pueden llegar por ellos.
+const VIRTUAL = /vEthernet|WSL|Hyper-V|VirtualBox|VMware|Docker|vboxnet|vmnet|Loopback/i;
+for (const [ifName, list] of Object.entries(os.networkInterfaces()))
+  for (const i of list || []) if (i.family === 'IPv4' && !i.internal) { LAN.push(i.address); if (!VIRTUAL.test(ifName)) PREFERRED.push(i.address); }
+const HOST_IP = process.env.HOST_IP || PREFERRED[0] || LAN[0] || 'localhost'; // con varios adaptadores (hotspot, USB, WiFi) fuerza cuál usar
 const scheme = PLAIN_HTTP ? 'http' : 'https';
 const baseUrl = PUBLIC_URL || `${scheme}://${HOST_IP}:${PORT}`;
 

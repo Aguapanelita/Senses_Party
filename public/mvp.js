@@ -5,7 +5,10 @@ const COLORS = ['#C6FF36', '#FF4D8D', '#37D9F2', '#FF9F43', '#9A72FF', '#F9E547'
 const CROWN_TARGET = 5, TAPS_TO_FINISH = 100, SPIN_EVERY = 2;
 const tapRace = new SensesGameEngines.TapRace(TAPS_TO_FINISH);
 const GAME_SECONDS = { tilt: 60, color: 30 };
-const VOICE_CUE_SECONDS = 1.15, VOICE_ATTEMPT_SECONDS = 3, VOICE_PERMISSION_TIMEOUT = 20000, VOICE_TURN_GAP = 700;
+const VOICE_CUE_SECONDS = 1.15, VOICE_ATTEMPT_SECONDS = 3, VOICE_PERMISSION_TIMEOUT = 10000, VOICE_TURN_GAP = 700;
+const COLOR_COUNTDOWN_MS = 5000;      // tiempo para activar la cámara antes de la Caza de colores (modo individual)
+const MOTION_FRESH_MS = 5000;         // el giro cuenta como "funcionando" si llegaron datos en los últimos 5 s
+const RESULTS_MS = 4200, RESULTS_WITH_BOXES_MS = 8000; // duración de la pantalla de resultados del campeonato
 const VOICE_REGISTERS = [{ name:'grave', min:82, max:165 }, { name:'medio', min:210, max:370 }, { name:'agudo', min:510, max:850 }];
 const VOICE_WAVES = ['sine','triangle','square','sawtooth'];
 const VOICE_MODIFIERS = ['vibrato','tremolo','glide','harmonic','detune','none'];
@@ -24,9 +27,11 @@ let sequenceActive=false, sequencePaused=false, sequencePhase='idle', sequenceUn
 const SEQUENCE_GAMES=['tap','tilt','color','voice'];
 const GAME_LABELS={tap:'Carrera de toques',tilt:'Torre en equilibrio',color:'Caza de colores',voice:'Acierta la nota'};
 function eligibleSequenceGames(){
-  const online=devices();
-  const hasMotion=online.some(d=>d.caps?.motion===true || Number.isFinite(Number(d.ch?.['ang.g'])));
-  const hasCamera=online.some(d=>d.caps?.cam===true);
+  const online=devices(), now=performance.now();
+  // Giro: solo si de verdad llegaron datos hace poco (un computador puede decir que tiene giro sin enviar nada).
+  const hasMotion=online.some(d=>now-(d.seen?.motion||0)<MOTION_FRESH_MS);
+  // Cámara: basta con que el teléfono PUEDA usarla; se le pedirá activarla antes de empezar.
+  const hasCamera=online.some(canUseCamera);
   return SEQUENCE_GAMES.filter(g=>g!=='tilt'||hasMotion).filter(g=>g!=='color'||hasCamera);
 }
 function nextSequenceMode(){
@@ -44,8 +49,9 @@ function showSequence(title,message,kicker='CAMPEONATO',showScores=true){
 function hideSequence(){ $('#sequenceOverlay').hidden=true; }
 function prepareSequenceGame(){
   const next=nextSequenceMode();
-  if(!next){sequenceActive=false;sequencePhase='idle';setRound('Activa giro y cámara en algún teléfono para incluir esos retos en la secuencia.');return;}
+  if(!next){stopSequence('No hay minijuegos disponibles: conecta un teléfono para continuar.');return;}
   mode=next;$('#mode').value=mode;instructions();renderPlayers();
+  if(mode==='color')requestCameras(); // así los jugadores activan la cámara durante las instrucciones
   sequencePhase='instructions';sequenceUntil=performance.now()+3600;
   showSequence('Siguiente reto',`${GAME_LABELS[mode]} · ${instructionsText(mode)} · comienza en unos segundos.`,'PRÓXIMO MINIJUEGO',false);
   setRound(`Siguiente: ${GAME_LABELS[mode]}`);
@@ -61,9 +67,9 @@ function startSequence(){
 }
 function stopSequence(message='Campeonato detenido por el anfitrión.'){
   sequenceActive=false;sequencePaused=false;sequencePhase='idle';sequenceUntil=0;
-  if(running&&mode==='color')for(const d of devices())command(d.id,{colorTarget:null});
+  if(mode==='color')for(const d of devices())command(d.id,{colorTarget:null}); // también cierra el aviso de cámara si el reto no alcanzó a empezar
   if(running&&mode==='voice')cancelVoiceTurn(message);
-  running=false;voiceWaiting=false;voiceListening=false;voiceNextAt=0;
+  running=false;voiceWaiting=false;voiceListening=false;voiceNextAt=0;colorCountdownUntil=0;
   $('#sequenceStart').disabled=!!championId;$('#sequencePause').disabled=true;$('#sequenceStop').disabled=true;
   hideSequence();setRound(message);updateAllSpinStates();renderPlayers();
 }
@@ -72,7 +78,7 @@ function toggleSequencePause(){
   sequencePaused=!sequencePaused;$('#sequencePause').textContent=sequencePaused?'Reanudar':'Pausar';
   updateAllSpinStates();
   if(sequencePaused){sequencePausedAt=performance.now();setRound('Campeonato pausado · pulsa Reanudar para seguir.');}
-  else{const delta=performance.now()-sequencePausedAt;if(sequencePhase!=='playing')sequenceUntil+=delta;else{roundStart+=delta;if(roundEnd)roundEnd+=delta;if(targetChanged)targetChanged+=delta;if(voiceReadyDeadline)voiceReadyDeadline+=delta;if(voiceTurnEnd)voiceTurnEnd+=delta;if(voiceSampleEnd)voiceSampleEnd+=delta;if(voiceNextAt)voiceNextAt+=delta;if(voiceChallenge.phase==='singing')voiceChallenge.deadline+=delta;}setRound('Campeonato reanudado');}
+  else{const delta=performance.now()-sequencePausedAt;if(sequencePhase!=='playing')sequenceUntil+=delta;else{roundStart+=delta;if(roundEnd)roundEnd+=delta;if(targetChanged)targetChanged+=delta;if(colorHunt.running)colorHunt.startedAt+=delta;if(colorCountdownUntil)colorCountdownUntil+=delta;if(voiceCountdownUntil)voiceCountdownUntil+=delta;if(voiceReadyDeadline)voiceReadyDeadline+=delta;if(voiceTurnEnd)voiceTurnEnd+=delta;if(voiceSampleEnd)voiceSampleEnd+=delta;if(voiceNextAt)voiceNextAt+=delta;if(voiceChallenge.phase==='singing')voiceChallenge.deadline+=delta;}setRound('Campeonato reanudado');}
 }
 let sequencePausedAt=0;
 let tacto, room = '', mode = 'tap', running = false, championId = null;
@@ -86,6 +92,9 @@ let voiceSounds = [], voiceOrder = [], voiceResults = {}, voiceSamples = [], voi
 let voiceWaiting = false, voiceListening = false, voiceReadyDeadline = 0, voiceSingStart = 0, voiceTurnEnd = 0, voiceNextAt = 0, voiceAudioContext = null, voiceStage = 'idle', voiceSampleEnd = 0, voiceCommandRetryAt = 0, voiceCountdownUntil = 0;
 const voiceChallenge = new SensesGameEngines.NoteChallenge(VOICE_ATTEMPT_SECONDS);
 let lastFrame = performance.now(), lastHud = 0;
+let hudDirty = false;          // "hay datos nuevos": los paneles se redibujan en tick(), no con cada mensaje
+let colorCountdownUntil = 0;   // cuenta regresiva para activar la cámara (Caza de colores en modo individual)
+let infoBase = '';             // dirección de red real del servidor (de /info), para el enlace de los teléfonos
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmt = v => v == null || !Number.isFinite(Number(v)) ? '—' : Number(v).toFixed(2);
 function setRound(text) { const node=$('#roundText'); if(node)node.textContent=text; }
@@ -94,12 +103,19 @@ function size() {
   canvas.width = r.width * d; canvas.height = r.height * d; ctx.setTransform(d, 0, 0, d, 0, 0);
 }
 addEventListener('resize', size); size();
+// ResizeObserver avisa cada vez que la caja del escenario cambia de tamaño (modo proyección, textos que crecen…),
+// no solo cuando cambia la ventana. Así el dibujo nunca queda estirado ni cortado.
+if (window.ResizeObserver) new ResizeObserver(size).observe(canvas.parentElement);
 function devices() { return tacto ? Object.values(tacto.devices).filter(d => d.online) : []; }
 function playerColor(id) { if (!playerColors[id]) { playerColors[id] = COLORS[nextPlayerColor % COLORS.length]; nextPlayerColor++; } return playerColors[id]; }
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function command(id, payload) {
   if (tacto?.client?.connected) tacto.client.publish(`tacto/${room}/${id}/cmd`, JSON.stringify(payload), { qos: 1 });
 }
+// ¿Puede este teléfono usar la cámara? (camAvail lo informa el control; cam = ya la tiene encendida)
+function canUseCamera(d) { return d.caps?.cam === true || d.caps?.camAvail === true; }
+// Pide a todos los teléfonos que muestren el botón "Activar cámara".
+function requestCameras() { for (const d of devices()) command(d.id, { camRequest: true }); }
 function spinState(d) {
   const canSpin = !running && !championId && (spinTokens[d.id] || 0) > 0;
   const targets = spinTargets[d.id] || [];
@@ -130,7 +146,7 @@ function renderPlayers() {
   $('#roomDuplicate').textContent=room.toUpperCase();
   $('#start').disabled = running || !!championId || sequenceActive;
   $('#mode').disabled = running || sequenceActive;
-  draw();
+  hudDirty = false; // el canvas ya se dibuja en cada cuadro dentro de tick()
 }
 function instructions() {
   const text = {
@@ -143,24 +159,26 @@ function instructions() {
   $('#modeName').textContent = ({tap:'Carrera de toques',tilt:'Torre en equilibrio',color:'Caza de colores',voice:'Acierta la nota'})[mode];
   return text[mode];
 }
+// Inicia el minijuego elegido. Devuelve true si pudo empezar y false si no
+// (así el campeonato sabe que debe pausar o pasar a otro reto en vez de quedarse pegado).
 function start() {
-  if (running || championId) return;
+  if (running || championId) return false;
   const online = devices();
-  if (!online.length) { setRound('Conecta al menos un teléfono.'); return; }
-  if(mode==='color'&&!online.some(d=>d.caps?.cam===true)){
-    const message='Activa la cámara en al menos un control antes de iniciar Caza de colores.';setRound(message);
-    if(sequenceActive)stopSequence(message);return;
+  if (!online.length) { setRound('Conecta al menos un teléfono.'); return false; }
+  if(mode==='color'&&!online.some(canUseCamera)){
+    setRound('Ningún control puede usar la cámara (ábrelo con el enlace HTTPS) · se omite Caza de colores.');
+    return false;
   }
-  sequencePhase=sequenceActive?'playing':'idle';hideSequence();running = true; roundStart = performance.now(); roundEnd = mode === 'voice' || mode === 'tap' ? 0 : roundStart + GAME_SECONDS[mode] * 1000;
+  sequencePhase=sequenceActive?'playing':'idle';hideSequence();running = true; roundStart = performance.now(); roundEnd = mode === 'tilt' ? roundStart + GAME_SECONDS.tilt * 1000 : 0;
   progress = {}; for (const d of online) progress[d.id] = 0;
   if (mode === 'tap') {
     progress = tapRace.start(online.map(d => d.id)).progress;
     for (const d of online) command(d.id, { tapMode: true, tapProgress: 0, tapTarget: TAPS_TO_FINISH, reset: true });
   }
   if (mode === 'color') {
-    const state=colorHunt.start(online.map(d=>d.id),performance.now());
-    colorSequence=colorHunt.sequence.slice();colorIndex=state.index;targetColor=state.color;targetChanged=colorHunt.startedAt;
-    for(const d of online)command(d.id,{colorTarget:{name:targetColor.name}});
+    colorHunt.reset(); colorIndex = -1; requestCameras();
+    // En el campeonato la cámara ya se pidió durante las instrucciones; en modo individual damos 5 s.
+    if (sequenceActive) beginColorHunt(); else colorCountdownUntil = performance.now() + COLOR_COUNTDOWN_MS;
   }
   if (mode === 'tilt') { balanceNeutral = {}; balanceX = {}; for (const d of online) { balanceNeutral[d.id] = d.ch['ang.g'] ?? 0; balanceX[d.id] = .5; } }
   if (mode === 'voice') {
@@ -168,12 +186,36 @@ function start() {
     voiceSamples=[];voiceSoundIndex=0;voicePlayerIndex=0;voiceCurrentId=null;voiceWaiting=false;voiceListening=false;voiceNextAt=0;voiceStage='idle';voiceSampleEnd=0;voiceCountdownUntil=0;prepareVoiceAudio();
     for(const d of online)command(d.id,{voiceTurn:{phase:'waiting',message:'Espera a que tu nombre se ilumine para activar el micrófono.'}});
   }
-  setRound(mode === 'tilt' ? 'Equilibrio: 60 s · usa solo el giroscopio para permanecer dentro de la franja verde' : mode === 'voice' ? 'Preparando sonidos nuevos para la partida…' : mode === 'color' ? `Color 1/5: ${targetColor.name} · encuéntralo en 5 segundos` : mode === 'tap' ? 'Carrera de toques: ¡el primero en llegar a 100 toques gana!' : 'Ronda en curso');
+  if (mode !== 'color') setRound(mode === 'tilt' ? 'Equilibrio: 60 s · usa solo el giroscopio para permanecer dentro de la franja verde' : mode === 'voice' ? 'Preparando sonidos nuevos para la partida…' : mode === 'tap' ? 'Carrera de toques: ¡el primero en llegar a 100 toques gana!' : 'Ronda en curso');
+  else if (colorCountdownUntil) setRound('Caza de colores: activen la cámara en sus teléfonos · empieza en 5 segundos');
   updateAllSpinStates(); renderPlayers();
   if(mode==='voice'){
     if(sequenceActive)beginVoiceTurn();
     else{voiceStage='countdown';voiceCountdownUntil=performance.now()+3000;setRound('Acierta la nota comienza al terminar la cuenta regresiva.');}
   }
+  return true;
+}
+// Arranca de verdad la búsqueda de colores (después de la cuenta regresiva, si la hubo).
+function beginColorHunt() {
+  colorCountdownUntil = 0;
+  const players = devices(), state = colorHunt.start(players.map(d => d.id), performance.now());
+  if (!state) { finishGame(null, 'sin jugadores'); return; }
+  colorSequence = colorHunt.sequence.slice(); colorIndex = state.index; targetColor = state.color; targetChanged = colorHunt.startedAt;
+  roundEnd = performance.now() + GAME_SECONDS.color * 1000;
+  for (const d of players) command(d.id, { colorTarget: { name: targetColor.name } });
+  setRound(`Color 1/5: ${targetColor.name} · encuéntralo en 5 segundos`);
+}
+// Qué hacer si el campeonato intenta iniciar un reto y no puede.
+function sequenceStartFailed() {
+  if (!sequenceActive) return;
+  if (!devices().length) { // sin jugadores: pausamos en vez de reintentar sin fin
+    sequencePaused = true; sequencePausedAt = performance.now(); $('#sequencePause').textContent = 'Reanudar';
+    sequencePhase = 'instructions'; sequenceUntil = performance.now() + 3600;
+    showSequence('Esperando jugadores', 'Conecta al menos un teléfono y pulsa Reanudar.', 'CAMPEONATO EN PAUSA', false);
+    setRound('Campeonato en pausa · no hay teléfonos conectados.');
+    return;
+  }
+  prepareSequenceGame(); // hay jugadores pero este reto no se puede jugar: pasamos al siguiente
 }
 function resetScores() {
   if(running&&mode==='color')for(const d of devices())command(d.id,{colorTarget:null});
@@ -203,8 +245,15 @@ $('#newRoom').onclick = () => {
 };
 function showRoom() {
   $('#room').textContent = room.toUpperCase(); $('#roomDuplicate').textContent=room.toUpperCase();
-  const url = new URL('phone.html', new URL('.', location.href)); url.searchParams.set('sala', room);
+  // Si la pantalla está abierta como "localhost", ese enlace no les sirve a los teléfonos
+  // ("localhost" significa "este mismo equipo"): usamos la dirección de red que entrega el servidor.
+  const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname);
+  const base = isLocal && infoBase ? new URL(infoBase.replace(/\/?$/, '/')) : new URL('.', location.href);
+  const url = new URL('phone.html', base); url.searchParams.set('sala', room);
   $('#phoneUrl').textContent = url.href;
+  const qr = $('#qr'); // el servidor genera el QR en /qr.svg; si no existe (p. ej. GitHub Pages) se oculta
+  qr.onload = () => { qr.hidden = false; }; qr.onerror = () => { qr.hidden = true; };
+  qr.src = 'qr.svg?u=' + encodeURIComponent(url.href);
 }
 function recordTap(d, m) {
   const active = new Set((Array.isArray(m?.p) ? m.p : []).map(p => String(p.i)));
@@ -213,6 +262,7 @@ function recordTap(d, m) {
 function recordTapEvent(d, m) {
   const eventId=String(m?.eventId||'');
   if(!running||sequencePaused||mode!=='tap')return;
+  tapRace.join(d.id); // si llegó tarde o se reconectó, se suma a la carrera en vez de ignorar sus toques
   const result=tapRace.tap(d.id,eventId,m?.count);
   if(!result.accepted)return;
   progress[d.id]=result.progress;
@@ -239,7 +289,7 @@ function onData(d, kind, m) {
   else if (kind === 'action' && m?.action === 'target') applySabotage(d.id, String(m.targetId || ''));
   else if (kind === 'action' && m?.action === 'voiceReady') voiceReady(d.id,Number(m.soundIndex));
   else if (kind === 'action' && m?.action === 'voiceDenied' && d.id===voiceCurrentId && Number(m.soundIndex)===voiceSoundIndex+1) skipVoiceTurn('No se autorizó el micrófono; se salta este intento.');
-  renderPlayers();
+  hudDirty = true; // solo marcamos; tick() redibuja los paneles como máximo unas 6 veces por segundo
 }
 function pickWinner(metric) {
   const ds = devices(); if (!ds.length) return null;
@@ -270,7 +320,11 @@ function finishGame(winnerId, reason) {
     sequencePhase='results';sequenceResult=championId?`👑 ${winner.name} gana el campeonato con ${scores[winnerId]} puntos.`:winner?`${winner.name} gana esta ronda y queda a ${Math.max(0,CROWN_TARGET-(scores[winnerId]||0))} puntos de la corona.`:'Ronda empatada; nadie suma punto.';
     showSequence(championId?'¡Campeón!':'Resultados',sequenceResult,`RONDA ${completedGames}`,true);
     if(championId){sequenceActive=false;sequencePhase='champion';$('#sequenceStart').disabled=true;$('#sequencePause').disabled=true;$('#sequenceStop').disabled=true;$('#sequenceContinue').hidden=true;}
-    else{sequenceUntil=performance.now()+4200;setRound(sequenceResult);}
+    else{
+      // si alguien tiene cajas sorpresa, damos más tiempo para abrirlas antes del siguiente reto
+      const boxesWaiting=devices().some(d=>(spinTokens[d.id]||0)>0);
+      sequenceUntil=performance.now()+(boxesWaiting?RESULTS_WITH_BOXES_MS:RESULTS_MS);setRound(sequenceResult);
+    }
   }
 }
 function spin(id, boxIndex=0) {
@@ -344,9 +398,17 @@ function draw() {
   const ds=devices();
   if(!ds.length){ctx.fillStyle='#b8b3c3';ctx.textAlign='center';ctx.font='16px system-ui';ctx.fillText('Conecta un teléfono para comenzar',w/2,h/2);return;}
   if(mode==='tilt'){drawBalance(ds,w,h);return;}
-  if(mode==='color'){ctx.fillStyle='#f5f0e8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText(`COLOR ${Math.max(1,colorIndex+1)}/5 · ${targetColor.name.toUpperCase()}`,w/2,34);ctx.fillStyle='#b8b3c3';ctx.font='12px system-ui';ctx.fillText(`El primero en encontrarlo suma · ${Math.max(0,5-(performance.now()-targetChanged)/1000).toFixed(1)} s`,w/2,55);}
+  if(mode==='color'&&running&&colorCountdownUntil){
+    const n=Math.max(1,Math.ceil((colorCountdownUntil-performance.now())/1000));
+    ctx.fillStyle='#f5f0e8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText('CAZA DE COLORES · ACTIVEN LA CÁMARA',w/2,34);
+    ctx.fillStyle='#b8b3c3';ctx.font='12px system-ui';ctx.fillText(`Toca "Activar cámara" en tu teléfono · empieza en ${n} s`,w/2,55);
+  }else if(mode==='color'){ctx.fillStyle='#f5f0e8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText(`COLOR ${Math.max(1,colorIndex+1)}/5 · ${targetColor.name.toUpperCase()}`,w/2,34);ctx.fillStyle='#b8b3c3';ctx.font='12px system-ui';ctx.fillText(`El primero en encontrarlo suma · ${Math.max(0,5-(performance.now()-targetChanged)/1000).toFixed(1)} s`,w/2,55);}
+  if(mode==='tap'){ // título e instrucción de la carrera, igual que en los otros minijuegos
+    ctx.fillStyle='#f5f0e8';ctx.textAlign='center';ctx.font='bold 18px system-ui';ctx.fillText(`CARRERA DE TOQUES · EL PRIMERO EN LLEGAR A ${TAPS_TO_FINISH} GANA`,w/2,34);
+    ctx.fillStyle='#b8b3c3';ctx.font='12px system-ui';ctx.fillText(running?'Toca la pantalla de tu teléfono lo más rápido que puedas (hasta 3 dedos a la vez)':'Pulsa "Iniciar ronda" para comenzar',w/2,55);
+  }
   if(mode==='voice'){drawVoice(ds,w,h);return;}
-  const row=Math.min(68,(h-90)/ds.length),top=mode==='tap'?34:76;
+  const row=Math.min(68,(h-90)/ds.length),top=76;
   ds.forEach((d,i)=>{
     const y=top+i*row+row/2,col=playerColor(d.id);ctx.fillStyle='#242438';ctx.fillRect(24,y-11,w-48,22);ctx.strokeStyle='#515a69';ctx.strokeRect(24,y-11,w-48,22);
     let fraction=0,x=24;
@@ -438,7 +500,7 @@ function drawVoice(ds,w,h) {
     if(!running){ctx.fillStyle='#b8b3c3';ctx.font='14px system-ui';ctx.fillText('Inicia la partida para escuchar sonidos nuevos.',w/2,68);}
     else if(voiceStage==='countdown'){const n=Math.max(1,Math.ceil((voiceCountdownUntil-performance.now())/1000));ctx.fillStyle='#b8b3c3';ctx.font='bold 24px system-ui';ctx.fillText(`La primera nota suena en ${n}…`,w/2,78);}
   else if(current){ctx.fillStyle=playerColor(current.id);ctx.font='bold 17px system-ui';ctx.fillText(`${current.name} · nota ${voiceSoundIndex+1}/3`,w/2,72);let status='Preparando el turno…',fraction=0;
-    if(voiceStage==='sample')status='Escucha la nota de muestra…';else if(voiceStage==='userMic')status=`${current.name}: activa el micrófono ahora`;else if(voiceListening){const left=Math.max(0,(voiceTurnEnd-performance.now())/1000),live=voiceSamples.length?Math.round(voiceSamples.reduce((sum,value)=>sum+value,0)/voiceSamples.length):null;status=`${current.name} canta · ${left.toFixed(1)} s${live==null?'':` · ±${live} cents`}`;fraction=1-left/VOICE_ATTEMPT_SECONDS;}
+    if(voiceStage==='sample')status='Escucha la nota de muestra…';else if(voiceStage==='userMic')status=`${current.name}: activa el micrófono ahora · quedan ${Math.max(0,Math.ceil((voiceReadyDeadline-performance.now())/1000))} s`;else if(voiceListening){const left=Math.max(0,(voiceTurnEnd-performance.now())/1000),live=voiceSamples.length?Math.round(voiceSamples.reduce((sum,value)=>sum+value,0)/voiceSamples.length):null;status=`${current.name} canta · ${left.toFixed(1)} s${live==null?'':` · ±${live} cents`}`;fraction=1-left/VOICE_ATTEMPT_SECONDS;}
     ctx.fillStyle='#b8b3c3';ctx.font='14px system-ui';ctx.fillText(status,w/2,105);ctx.fillStyle='#42415b';ctx.fillRect(28,125,w-56,16);ctx.fillStyle=playerColor(current.id);ctx.fillRect(28,125,(w-56)*clamp(fraction,0,1),16);
   }else{ctx.fillStyle='#b8b3c3';ctx.font='14px system-ui';ctx.fillText('Preparando el siguiente turno…',w/2,76);}
   const top=170,row=Math.min(48,(h-top-8)/Math.max(1,ds.length));ds.forEach((d,i)=>{const y=top+i*row,ready=d.id===voiceCurrentId&&voiceStage==='userMic',singing=d.id===voiceCurrentId&&voiceListening,active=ready||singing,col=playerColor(d.id);if(active){ctx.fillStyle=ready?'#c6ff3624':'#ffffff12';ctx.fillRect(18,y-17,w-36,36);ctx.strokeStyle=ready?'#C6FF36':'#ffffff55';ctx.lineWidth=1;ctx.strokeRect(18,y-17,w-36,36);}ctx.fillStyle=col;ctx.textAlign='left';ctx.font=active?'bold 14px system-ui':'13px system-ui';ctx.fillText(`${d.name} · ${progress[d.id]||0}/3 turnos · ${voiceAccuracy(d.id)}`,28,y);if(active){ctx.textAlign='right';ctx.fillStyle=ready?'#C6FF36':'#f5f0e8';ctx.font='bold 11px system-ui';ctx.fillText(ready?'ACTIVA MICRÓFONO':'EN TURNO',w-28,y);}});
@@ -451,7 +513,7 @@ function tick(now) {
   const dt=Math.min(.05,(now-lastFrame)/1000);lastFrame=now;
   if(sequenceActive&&!sequencePaused&&sequencePhase==='results'&&now>=sequenceUntil){prepareSequenceGame();}
   if(sequenceActive&&!sequencePaused&&sequencePhase==='instructions'&&now>=sequenceUntil){sequencePhase='countdown';sequenceUntil=now+3000;showSequence('Prepárate','3','CUENTA REGRESIVA',false);}
-  if(sequenceActive&&!sequencePaused&&sequencePhase==='countdown'){const n=Math.max(1,Math.ceil((sequenceUntil-now)/1000));$('#sequenceTitle').textContent=String(n);if(now>=sequenceUntil){hideSequence();start();}}
+  if(sequenceActive&&!sequencePaused&&sequencePhase==='countdown'){const n=Math.max(1,Math.ceil((sequenceUntil-now)/1000));$('#sequenceTitle').textContent=String(n);if(now>=sequenceUntil){hideSequence();if(!start())sequenceStartFailed();}}
   if(sequencePaused){draw();requestAnimationFrame(tick);return;}
   if(running&&roundEnd>0&&now>=roundEnd){finishByTime();}
   if(running&&mode==='tilt'){
@@ -465,7 +527,8 @@ function tick(now) {
       }
     }
   }
-  if(running&&mode==='color'){
+  if(running&&mode==='color'&&colorCountdownUntil&&now>=colorCountdownUntil)beginColorHunt();
+  if(running&&mode==='color'&&!colorCountdownUntil){
     const expired=colorHunt.tick(now);
     if(expired){progress={...expired.scores};if(expired.done){setRound('Terminó la búsqueda del quinto color.');finishGame(expired.winner,'caza de cinco colores');}
       else{colorIndex=expired.current.index;targetColor=expired.current.color;targetChanged=colorHunt.startedAt;for(const d of devices())command(d.id,{colorTarget:{name:targetColor.name}});setRound(`Se agotaron 5 segundos · ahora busca ${targetColor.name} (${colorIndex+1}/5)`);}}
@@ -488,14 +551,30 @@ function tick(now) {
       if(running&&!voiceCurrentId&&voiceNextAt&&now>=voiceNextAt){voiceNextAt=0;beginVoiceTurn();}
     }
   }
-  draw();if(now-lastHud>300){lastHud=now;renderPlayers();}requestAnimationFrame(tick);
+  draw();
+  // Paneles HTML: se redibujan solo si hay datos nuevos (máx. ~6 veces/s) y, por si acaso, al menos 1 vez por segundo.
+  if((hudDirty&&now-lastHud>150)||now-lastHud>1000){lastHud=now;renderPlayers();}
+  requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
 $('#mode').value=mode;instructions();
 (async()=>{
   tacto=new Tacto();updateRoomFromURL();
   tacto.on('estado',s=>{$('#connection').textContent=s;$('#connection').className='pill '+(s==='conectado'?'on':'');$('#connectionDuplicate').textContent=s;$('#coverStatus').textContent=s==='conectado'?'Sala conectada · lista para jugar':s==='reconectando'?'Reconectando con Tacto…':'Sin conexión con Tacto';$('#coverLed').classList.toggle('on',s==='conectado');});
-  tacto.on('datos',onData);tacto.on('dispositivo',d=>{renderPlayers();updateAllSpinStates();if(d&&running&&mode==='color')command(d.id,{colorTarget:{name:targetColor.name}});if(d&&d.id===voiceCurrentId&&!d.online)skipVoiceTurn('Jugador desconectado; se salta este intento.');});
+  tacto.on('datos',onData);
+  tacto.on('dispositivo',d=>{
+    hudDirty=true;
+    // Respondemos solo al teléfono que avisó su estado (antes se escribía a TODOS cada vez).
+    if(!d){updateAllSpinStates();return;}
+    if(d.online)spinState(d);
+    if(d.online&&running&&mode==='color'){
+      if(colorCountdownUntil)command(d.id,{camRequest:true});
+      else command(d.id,{colorTarget:{name:targetColor.name}});
+    }
+    if(d.id===voiceCurrentId&&!d.online)skipVoiceTurn('Jugador desconectado; se salta este intento.');
+  });
+  // dirección de red real del servidor, para armar el enlace y el QR de los teléfonos
+  fetch('info',{cache:'no-store'}).then(r=>r.json()).then(i=>{if(i&&i.baseUrl){infoBase=i.baseUrl;showRoom();}}).catch(()=>{});
   tacto.on('rtt',d=>{const a=d.rtt.slice().sort((x,y)=>x-y);$('#latency').textContent=a.length?`Latencia ${Math.round(a[Math.floor(a.length/2)])} ms`:'';});
   tacto.on('error',e=>$('#notice').textContent=e.message||'Error de conexión');
   try{await tacto.connect();$('#notice').textContent='Conectado al broker MQTT de Tacto.';updateAllSpinStates();}

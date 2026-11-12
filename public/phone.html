@@ -28,7 +28,10 @@
              background: radial-gradient(circle at 50% 40%, #2a1e46, #0d0915 72%); }
   #cameraPreview { position:absolute; z-index:1; inset:0; width:100%; height:100%; object-fit:cover; display:none; transform:translateZ(0); pointer-events:none; background:#000; }
   #cameraPreview.active { display:block; }
-  #surface.camera-active #cv, #surface.camera-active #hud, #surface.camera-active #hint { display:none !important; }
+  /* con la cámara encendida se ocultan los textos, pero los dibujos de los toques (#cv) siguen visibles encima */
+  #surface.camera-active #hud, #surface.camera-active #hint { display:none !important; }
+  #camAsk { min-height:64px; font-size:18px; font-weight:700; }
+  #camAsk[hidden] { display:none !important; }
   #cv, #hud, #hint { z-index:2; }
   #cameraLabel { position:absolute; z-index:3; left:10px; bottom:10px; padding:6px 9px; border:1px solid #ffffff55; border-radius:999px; background:#090812d9; color:#fff; font:600 10px/1.2 var(--mono); letter-spacing:.08em; pointer-events:none; }
   #cameraLabel[hidden] { display:none; }
@@ -74,6 +77,7 @@
   <div id="run">
     <div id="bar"><span id="st" role="status" aria-live="polite">Conectando…</span><span id="info"></span></div>
     <div id="hostState" class="msg" role="status" aria-live="polite">Esperando respuesta de la pantalla anfitriona…</div>
+    <button id="camAsk" class="primary" type="button" hidden>📷 Activar cámara para la Caza de colores</button>
     <div id="surface"><video id="cameraPreview" autoplay playsinline webkit-playsinline muted aria-label="Vista en vivo de la cámara del teléfono"></video><div id="cameraLabel" hidden>VISTA EN VIVO · SOLO EN ESTE TELÉFONO</div><div id="tapHud" hidden><div id="tapHudHead"><span>TOQUES</span><span id="tapHudCount">0/100</span></div><div id="tapDots" aria-hidden="true"></div></div><div id="colorPrompt" hidden></div><canvas id="cv" aria-hidden="true"></canvas><div id="hud" aria-hidden="true"></div><div id="hint">Toca y arrastra con uno o varios dedos</div></div>
     <div id="mods">
       <button class="mod" id="m-motion" aria-pressed="false">Giro<small id="v-motion">–</small></button>
@@ -98,6 +102,7 @@ const Q = new URLSearchParams(location.search);
 $('#name').value = ls('tacto.name') || '';
 $('#sala').value = Tacto.clean(Q.get('sala')) || Tacto.clean(ls('tacto.sala')) || '';
 
+let session = ''; // identifica ESTA conexión; la pantalla ignora avisos de desconexión de conexiones anteriores
 let client = null, base = '', name = '', sala = '', voiceAutoManaged = false, voiceCommandSeq = 0, voiceAwaitingTap = false, voiceActiveSoundIndex = 0, voiceMicStopTimer = 0;
 const dev = ls('tacto.dev') || (ls('tacto.dev', Tacto.rand(6)), ls('tacto.dev'));
 const pub = (kind, obj, qos = 0, retain = false) => client && client.connected && client.publish(`${base}/${kind}`, JSON.stringify(obj), { qos, retain });
@@ -107,12 +112,15 @@ const S = { f: { min: 9, max: -1, n: 0 }, d: { min: 1e9, max: -1, n: 0 } };
 const quality = (s, eps) => (!s.n ? 'sin datos aún' : s.max <= 0 ? 'sin dato' : s.n > 20 && s.max - s.min < eps ? 'constante' : 'variable');
 const caps = () => ({ presion: quality(S.f, 0.02), diametro: quality(S.d, 1), tacto: 'ontouchstart' in window ? 'touch' : 'puntero' });
 let lastCaps = '';
-function publishStatus() { pub('status', { online: true, name, caps: { ...caps(), motion: motionOn, mic: !!micStream, cam: !!camStream } }, 1, true); }
+// camAvail: el teléfono PUEDE usar cámara (página segura con HTTPS y navegador compatible), aunque aún no esté encendida
+const camAvailable = () => !!(window.isSecureContext && navigator.mediaDevices?.getUserMedia);
+function publishStatus() { pub('status', { online: true, s: session, name, caps: { ...caps(), motion: motionOn, mic: !!micStream, cam: !!camStream, camAvail: camAvailable() } }, 1, true); }
 
 // ---------- conexión MQTT ----------
 async function connect() {
   base = `tacto/${sala}/${dev}`;
-  const will = { topic: `${base}/status`, payload: JSON.stringify({ online: false, name }), qos: 1, retain: true };
+  session = Tacto.rand(6);
+  const will = { topic: `${base}/status`, payload: JSON.stringify({ online: false, s: session, name }), qos: 1, retain: true };
   const o = await Tacto.open({ clientId: 'tel-' + dev + '-' + Tacto.rand(5), will });
   client = o.client;
   const where = /^wss?:\/\/(localhost|\d+\.\d+\.\d+\.\d+)/.test(o.broker) ? 'broker local' : 'broker público';
@@ -120,14 +128,14 @@ async function connect() {
   client.on('connect', () => {
     $('#st').textContent = '● conectado'; $('#st').className = 'on';
     $('#hostState').textContent = 'Conectado al broker; esperando a la pantalla anfitriona…'; $('#hostState').className = 'msg';
-    client.subscribe(`${base}/cmd`); publishStatus();
+    client.subscribe(`${base}/cmd`, { qos: 1 }); publishStatus(); // qos 1 = entrega garantizada de los avisos de la pantalla
   });
   client.on('reconnect', () => { $('#st').textContent = 'Reconectando…'; $('#st').className = 'warn'; $('#hostState').textContent = 'Reconectando con la sala…'; $('#hostState').className = 'msg'; });
   client.on('offline', () => { $('#st').textContent = 'Sin conexión'; $('#st').className = 'warn'; $('#hostState').textContent = 'Se perdió la conexión con la sala.'; $('#hostState').className = 'msg'; });
   client.on('close', () => { $('#st').textContent = 'Sin conexión'; $('#st').className = 'warn'; $('#hostState').textContent = 'Se perdió la conexión con la sala.'; $('#hostState').className = 'msg'; });
   client.on('error', e => { $('#err2').textContent = 'MQTT: ' + (e.message || e); });
   client.on('message', (t, p) => { // responde al ping y recibe disponibilidad/resultados de la ruleta
-    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); if (m.hostReady) { $('#hostState').textContent = 'La pantalla anfitriona recibió este teléfono.'; $('#hostState').className = 'msg on'; } if ('tapMode' in m || 'tapProgress' in m) updateTapHud(m); if (m.voiceTurn) handleVoiceTurn(m.voiceTurn); if ('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m || 'colorTarget' in m) updateSpinUi(m); } catch {}
+    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); if (m.hostReady) { $('#hostState').textContent = 'La pantalla anfitriona recibió este teléfono.'; $('#hostState').className = 'msg on'; } if ('tapMode' in m || 'tapProgress' in m) updateTapHud(m); if (m.voiceTurn) handleVoiceTurn(m.voiceTurn); if (m.camRequest || 'colorTarget' in m) updateCamAsk(m); if ('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m || 'colorTarget' in m) updateSpinUi(m); } catch {}
   });
 }
 
@@ -135,16 +143,23 @@ async function connect() {
 const surf = $('#surface'), cv = $('#cv'), g = cv.getContext('2d');
 let cur = { n: 0, p: [], ar: 1 }, lastN = 0, queued = false;
 const TAP_TARGET = 100;
-let tapModeOn = false, tapCountLocal = 0, tapDotsReady = false;
+let tapModeOn = false, tapCountLocal = 0, tapDotsReady = false, tapHideTimer = 0;
 function updateTapHud(m = {}) {
-  if ('tapMode' in m) tapModeOn = !!m.tapMode;
+  if ('tapMode' in m) {
+    const wasOn = tapModeOn; tapModeOn = !!m.tapMode;
+    if (tapModeOn) { clearTimeout(tapHideTimer); tapHideTimer = 0; }
+    else if (wasOn) { // la carrera terminó: dejamos el resultado 2 s a la vista y luego ocultamos el contador
+      clearTimeout(tapHideTimer);
+      tapHideTimer = setTimeout(() => { tapHideTimer = 0; if (!tapModeOn) { tapCountLocal = 0; $('#tapHud').hidden = true; } }, 2000);
+    }
+  }
   if (m.reset) {
     tapCountLocal = 0;
   } else if ('tapProgress' in m) {
     tapCountLocal = Math.max(tapCountLocal, clamp(Math.floor(Number(m.tapProgress) || 0), 0, TAP_TARGET));
   }
   const hud = $('#tapHud');
-  hud.hidden = !tapModeOn && tapCountLocal === 0;
+  hud.hidden = !tapModeOn && !tapHideTimer; // solo visible durante la carrera (y 2 s después)
   if (hud.hidden) return;
   const dots = $('#tapDots');
   if (!tapDotsReady || dots.childElementCount !== TAP_TARGET) {
@@ -172,6 +187,18 @@ function sendTapPress(count = 1) {
 }
 function fit() { const d = devicePixelRatio || 1, r = surf.getBoundingClientRect(); cv.width = r.width * d; cv.height = r.height * d; g.setTransform(d, 0, 0, d, 0, 0); }
 addEventListener('resize', fit);
+// ResizeObserver: reajusta el canvas cada vez que la zona de juego cambia de tamaño
+// (aparece un mensaje, el panel de cajas, el botón de cámara…), no solo al girar la pantalla.
+if (window.ResizeObserver) new ResizeObserver(fit).observe(surf);
+
+// Ondas: cada toque deja un círculo que se agranda y desaparece en 400 ms, para que se note aunque el toque sea rápido.
+const ripples = [], RIPPLE_MS = 400;
+function addRipple(clientX, clientY) {
+  const r = surf.getBoundingClientRect();
+  ripples.push({ x: clientX - r.left, y: clientY - r.top, t: performance.now() });
+  if (ripples.length > 30) ripples.shift();
+  $('#hint').style.display = 'none';
+}
 
 function setTouches(p, r) {
   cur = { n: p.length, p, ar: r3(r.width / r.height) };
@@ -200,6 +227,7 @@ function onTouch(e) {
   if (e.type === 'touchstart' && e.changedTouches?.length) {
     const freshCount = Math.min(3, Math.max(1, e.changedTouches.length));
     sendTapPress(freshCount);
+    for (const t of e.changedTouches) addRipple(t.clientX, t.clientY);
   }
   const p = [];
   for (const t of list) {
@@ -213,7 +241,9 @@ function onTouch(e) {
 ['gesturestart', 'gesturechange'].forEach(n => document.addEventListener(n, e => e.preventDefault()));
 surf.addEventListener('contextmenu', e => e.preventDefault());
 
-// Ratón o lápiz (para probar desde un computador)
+// Ratón o lápiz (para probar desde un computador).
+// Los dedos ya se procesan arriba con Touch Events; por eso aquí se ignora pointerType 'touch'
+// (antes cada toque se procesaba dos veces y el dibujo parpadeaba).
 const ptrs = new Map();
 function fromPtrs() {
   const r = surf.getBoundingClientRect(), p = []; let i = 0;
@@ -221,11 +251,11 @@ function fromPtrs() {
   setTouches(p, r);
 }
 surf.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch') return;
   try { surf.setPointerCapture(e.pointerId); } catch {}
   ptrs.set(e.pointerId, e);
-  if (e.pointerType !== 'touch') {
-    sendTapPress(1);
-  }
+  sendTapPress(1);
+  addRipple(e.clientX, e.clientY);
   fromPtrs();
 });
 surf.addEventListener('pointermove', e => { if (ptrs.has(e.pointerId)) { ptrs.set(e.pointerId, e); fromPtrs(); } });
@@ -241,6 +271,13 @@ function draw() {
     g.strokeStyle = '#e6ff3d'; g.lineWidth = 2; g.beginPath(); g.arc(x, y, rad, 0, 7); g.stroke();
     g.beginPath(); g.moveTo(x - rad - 10, y); g.lineTo(x + rad + 10, y); g.moveTo(x, y - rad - 10); g.lineTo(x, y + rad + 10); g.stroke();
     g.fillStyle = '#fff'; g.font = '13px system-ui'; g.textAlign = 'center'; g.fillText(z.i, x, y - rad - 14);
+  }
+  const now = performance.now();
+  while (ripples.length && now - ripples[0].t > RIPPLE_MS) ripples.shift(); // descarta las ondas que ya terminaron
+  for (const w of ripples) {
+    const age = (now - w.t) / RIPPLE_MS; // de 0 (recién tocado) a 1 (desaparece)
+    g.strokeStyle = `rgba(198,255,54,${1 - age})`; g.lineWidth = 4 * (1 - age) + 1;
+    g.beginPath(); g.arc(w.x, w.y, 24 + 56 * age, 0, Math.PI * 2); g.stroke();
   }
   const c = caps(), lines = [`dedos ${cur.n}`];
   for (const z of cur.p) lines.push(`${z.i}  x ${r2(z.x).toFixed(2)}  y ${r2(z.y).toFixed(2)}  presión ${r2(z.f).toFixed(2)}  ⌀ ${Math.round(z.d)} px`);
@@ -271,7 +308,7 @@ function bindMotion() {
     if (!motionOn || !mdirty) return; mdirty = false;
     pub('motion', { t: Date.now(), a: ang && ang.map(r1), r: rot && rot.map(r1), c: acc && acc.map(r2) });
     if (ang) $('#v-motion').textContent = `${Math.round(ang[1])}° ${Math.round(ang[2])}°`;
-  }, 16);
+  }, 40); // 25 envíos por segundo: suficiente para el equilibrio y no satura la pantalla (antes eran 60)
 }
 
 // ---------- micrófono ----------
@@ -335,7 +372,7 @@ async function startCam() {
     } else throw e;
   }
   cameraVideo.srcObject = camStream; cameraVideo.classList.add('active'); surf.classList.add('camera-active');
-  $('#cv').style.display = 'none'; $('#hud').style.display = 'none'; $('#hint').style.display = 'none';
+  $('#hud').style.display = 'none'; $('#hint').style.display = 'none'; // #cv sigue visible: los toques se dibujan sobre la cámara
   try {
     const metadata=cameraVideo.videoWidth?Promise.resolve():new Promise(resolve=>cameraVideo.addEventListener('loadedmetadata',resolve,{once:true}));
     await cameraVideo.play();
@@ -365,6 +402,28 @@ async function startCam() {
   }, 80);
 }
 function stopCam() { clearInterval(camTimer);camStream?.getTracks().forEach(t => t.stop()); camStream = null; cameraVideo.pause(); cameraVideo.srcObject = null; cameraVideo.classList.remove('active'); surf.classList.remove('camera-active'); $('#cameraLabel').hidden=true; $('#cv').style.display=''; $('#hud').style.display=''; if(!cur.n)$('#hint').style.display='grid'; }
+
+// ---------- cámara pedida por la pantalla (Caza de colores) ----------
+// Por seguridad, el navegador solo enciende la cámara si la persona toca algo:
+// por eso mostramos un botón grande en vez de encenderla sola.
+let camWanted = false, camAutoManaged = false; // camAutoManaged = la encendió el juego, así que el juego la apaga
+function refreshCamAsk() { $('#camAsk').hidden = !camWanted || !!camStream; }
+function updateCamAsk(m) {
+  if (m.camRequest || m.colorTarget?.name) camWanted = true;
+  else if ('colorTarget' in m && !m.colorTarget) { // terminó la Caza de colores
+    camWanted = false;
+    if (camAutoManaged && camStream) { stopCam(); setOn('#m-cam', false); $('#v-cam').textContent = '–'; publishStatus(); }
+    camAutoManaged = false;
+  }
+  refreshCamAsk();
+}
+$('#camAsk').onclick = async () => {
+  if (camStream) return refreshCamAsk();
+  $('#camAsk').disabled = true;
+  try { $('#err2').textContent = ''; await startCam(); camAutoManaged = true; setOn('#m-cam', true); publishStatus(); }
+  catch (e) { fail(e); }
+  finally { $('#camAsk').disabled = false; refreshCamAsk(); }
+};
 
 // ---------- ruleta de campeonato ----------
 let spinUiTimer = 0;
@@ -422,7 +481,8 @@ $('#m-mic').onclick = async () => {
   }
 };
 $('#m-cam').onclick = async () => {
-  try { $('#err2').textContent = ''; if (camStream) { stopCam(); setOn('#m-cam', false); $('#v-cam').textContent = '–'; } else { await startCam(); setOn('#m-cam', true); } publishStatus(); } catch (e) { fail(e); }
+  try { $('#err2').textContent = ''; camAutoManaged = false; if (camStream) { stopCam(); setOn('#m-cam', false); $('#v-cam').textContent = '–'; } else { await startCam(); setOn('#m-cam', true); } publishStatus(); } catch (e) { fail(e); }
+  refreshCamAsk();
 };
 
 // ---------- entrar ----------

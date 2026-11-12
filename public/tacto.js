@@ -148,16 +148,21 @@
     _msg(topic, payload) {
       const [, sala, dev, kind] = topic.split('/');
       if (sala !== this.sala || !dev || !kind) return;
+      if (kind === 'cmd') return; // son los mensajes que envía la propia experiencia: no hay nada que procesar
       let m; try { m = JSON.parse(payload.toString()); } catch { return; }
-      const d = (this.devices[dev] ||= { id: dev, name: dev, online: false, last: 0, ch: {}, rtt: [], caps: {} });
+      const d = (this.devices[dev] ||= { id: dev, name: dev, online: false, last: 0, ch: {}, rtt: [], caps: {}, seen: {}, s: null });
       if (kind === 'status') {
+        // "s" identifica cada conexión del teléfono. Si llega un aviso de desconexión
+        // de una conexión anterior (por ejemplo, tras recargar la página), se ignora.
+        if (!m.online && m.s && d.s && m.s !== d.s) return;
+        if (m.online && m.s) d.s = m.s;
         d.online = !!m.online; d.name = m.name || dev; d.caps = m.caps || d.caps;
         if (!d.online) { d.ch['touch.n'] = 0; d.ch['touch.down'] = 0; d.ch['touch.f'] = 0; d.ch['touch.d'] = 0; } // sin teléfono no queda nada "apretado"
         this.emit('dispositivo', d); return;
       }
       if (kind === 'pong') { d.rtt.push(performance.now() - m.t); if (d.rtt.length > 40) d.rtt.shift(); this.emit('rtt', d); return; }
-      if (kind === 'cmd') return;
       d.last = performance.now(); d.online = true;
+      d.seen[kind] = d.last; // cuándo llegó por última vez cada tipo de dato (sirve para saber si el giro funciona de verdad)
       flatten(kind, m, d.ch);
       this.emit('datos', d, kind, m);
     }
