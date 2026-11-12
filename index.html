@@ -1,0 +1,19 @@
+<!doctype html>
+<!--
+  GitHub Pages publica la RAÍZ del repositorio, pero la web vive en la carpeta public/.
+  Esta página solo redirige a public/ (conservando ?sala=… y #…), para que la dirección
+  principal https://<usuario>.github.io/Senses_Party/ muestre la experiencia.
+  (Al usar "npm start" este archivo no se usa: el servidor ya entrega public/ directamente.)
+-->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SENSES PARTY</title>
+<meta http-equiv="refresh" content="0; url=public/">
+<script>location.replace('public/' + location.search + location.hash);</script>
+</head>
+<body style="background:#11111b;color:#f5f0e8;font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0">
+  <p>Abriendo Senses Party… si no avanza, <a href="public/" style="color:#C6FF36">entra aquí</a>.</p>
+</body>
+</html>
