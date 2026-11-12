@@ -105,14 +105,16 @@
         this.advanceCursor();
       }
       if (!this.running) return { type: 'done', ...this.summary() };
-      this.currentId = this.players[this.playerIndex]; this.phase = 'awaiting-sample'; this.centsSamples = [];
-      return { type: 'request-sample', playerId: this.currentId, soundIndex: this.soundIndex + 1,
-        soundKey: this.sounds[this.soundIndex].seed, sound: this.sounds[this.soundIndex] };
-    }
-    acknowledgeSample(playerId, soundKey) {
-      if (!this.running || this.phase !== 'awaiting-sample' || playerId !== this.currentId || soundKey !== this.sounds[this.soundIndex].seed) return null;
+      this.currentId = this.players[this.playerIndex];
       this.phase = 'sample-playing';
-      return { type: 'play-host-sample', playerId, soundIndex: this.soundIndex + 1, sound: this.sounds[this.soundIndex] };
+      this.centsSamples = [];
+      return {
+        type: 'play-sample',
+        playerId: this.currentId,
+        soundIndex: this.soundIndex + 1,
+        total: this.sounds.length,
+        sound: this.sounds[this.soundIndex]
+      };
     }
     sampleFinished() {
       if (!this.running || this.phase !== 'sample-playing') return null;
@@ -127,14 +129,15 @@
     addPitch(playerId, pitchHz, level) {
       if (!this.running || this.phase !== 'singing' || playerId !== this.currentId) return false;
       const hz = Number(pitchHz), loudness = Number(level), targetHz = Number(this.sounds[this.soundIndex].hz);
-      if (!Number.isFinite(hz) || hz < 65 || hz > 900 || !Number.isFinite(loudness) || loudness < 0.025 || !(targetHz > 0)) return false;
+      if (!Number.isFinite(hz) || hz < 65 || hz > 1000 || !Number.isFinite(loudness) || loudness < 0.025 || !(targetHz > 0)) return false;
       this.centsSamples.push(Math.abs(1200 * Math.log2(hz / targetHz)));
       return true;
     }
     tick(now) {
       if (!this.running || this.phase !== 'singing' || now < this.deadline) return null;
       const id = this.currentId, completedSoundIndex = this.soundIndex, values = this.centsSamples;
-      const score = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : Infinity;
+      // Require at least 2 valid samples to consider voice detected, otherwise fail
+      const score = values.length >= 2 ? values.reduce((sum, value) => sum + value, 0) / values.length : Infinity;
       this.results[id][this.soundIndex] = score;
       this.advanceCursor();
       return { type: this.running ? 'turn-finished' : 'done', playerId: id, soundIndex: completedSoundIndex + 1,
@@ -153,11 +156,11 @@
     summary() {
       const ranked = this.players.map(id => {
         const values = this.results[id] || [];
-        const score = values.length === this.sounds.length && values.every(Number.isFinite)
-          ? values.reduce((sum, value) => sum + value, 0) / values.length : Infinity;
-        return { id, score };
+        const valid = values.length === this.sounds.length && values.every(v => v !== null && Number.isFinite(v));
+        const score = valid ? values.reduce((sum, value) => sum + value, 0) / values.length : Infinity;
+        return { id, score, completedNotes: values.filter(v => v !== null && Number.isFinite(v)).length };
       }).sort((a, b) => a.score - b.score);
-      const winner = ranked.length && Number.isFinite(ranked[0].score) && (!ranked[1] || !Number.isFinite(ranked[1].score) || Math.abs(ranked[0].score - ranked[1].score) >= 3) ? ranked[0].id : null;
+      const winner = ranked.length && Number.isFinite(ranked[0].score) && (!ranked[1] || !Number.isFinite(ranked[1].score) || Math.abs(ranked[0].score - ranked[1].score) >= 2) ? ranked[0].id : null;
       return { results: Object.fromEntries(this.players.map(id => [id, this.results[id].slice()])), ranked, winner };
     }
   }
