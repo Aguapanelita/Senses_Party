@@ -42,7 +42,8 @@
   .mod small { display: block; font-weight: 400; font-size: 11px; margin-top: 2px; font-variant-numeric: tabular-nums; color: var(--mut); }
   .mod.active small { color: var(--neo); }
   .msg { font-size: 13px; }
-  #spinPanel { display:flex; flex-direction:column; gap:8px; } #spinPanel p { margin:0; color:var(--fg); } #spinTarget { width:100%; }
+  #spinPanel { display:flex; flex-direction:column; gap:8px; } #spinPanel p { margin:0; color:var(--fg); } #spinTarget { width:100%; } #spinPanel[hidden], #spinBoxes[hidden] { display:none !important; }
+  .phone-boxes { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; } .phone-boxes button { min-height:64px; font-size:26px; background:linear-gradient(145deg,#342353,#201b31); border-color:#9a72ff88; } .phone-boxes button:active { transform:translateY(2px) scale(.98); }
   @media (max-height: 520px) { #mods { grid-template-columns: repeat(3, 1fr); } .mod { min-height: 44px; padding: 6px 4px; } #hud { font-size: 11px; } }
 </style>
 </head>
@@ -66,7 +67,7 @@
       <button class="mod" id="m-mic" aria-pressed="false">Micrófono<small id="v-mic">–</small></button>
       <button class="mod" id="m-cam" aria-pressed="false">Cámara<small id="v-cam">–</small></button>
     </div>
-    <div id="spinPanel" class="card" hidden><p id="spinHelp">Ruleta disponible entre minijuegos.</p><select id="spinTarget" aria-label="Jugador objetivo" hidden></select><button id="spinAction" class="primary" type="button" disabled>Girar ruleta</button></div>
+    <div id="spinPanel" class="card" hidden><p id="spinHelp">Caja sorpresa disponible entre minijuegos.</p><div id="spinBoxes" class="phone-boxes" hidden><button type="button" data-box="0" aria-label="Abrir caja uno">📦</button><button type="button" data-box="1" aria-label="Abrir caja dos">📦</button><button type="button" data-box="2" aria-label="Abrir caja tres">📦</button></div><select id="spinTarget" aria-label="Jugador objetivo" hidden></select><button id="spinAction" class="primary" type="button" disabled>Confirmar sabotaje</button></div>
     <div class="msg" id="err2" role="alert"></div>
   </div>
 
@@ -285,8 +286,10 @@ let spinUiTimer = 0;
 function updateSpinUi(m) {
   if ('colorTarget' in m) { const prompt=$('#colorPrompt'); if(m.colorTarget){prompt.textContent=`Busca ${m.colorTarget.name}`;prompt.style.border='1px solid #ffffff80';prompt.hidden=false;}else prompt.hidden=true; }
   if (!('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m || 'spinTokens' in m || 'sabotageTargets' in m)) return;
-  const panel = $('#spinPanel'), button = $('#spinAction'), target = $('#spinTarget');
+  const panel = $('#spinPanel'), button = $('#spinAction'), target = $('#spinTarget'), boxes=$('#spinBoxes');
   const pending = !!m.sabotagePending, available = !!m.spinAvailable;
+  boxes.hidden=!available||pending;button.hidden=!pending;
+  if(available)boxes.querySelectorAll('button').forEach(b=>b.disabled=false);
   if (Array.isArray(m.sabotageTargets)) {
     target.replaceChildren();
     for (const player of m.sabotageTargets) { const option = document.createElement('option'); option.value = player.id; option.textContent = player.name; target.appendChild(option); }
@@ -301,15 +304,17 @@ function updateSpinUi(m) {
     if (!available && !pending) spinUiTimer = setTimeout(() => { panel.hidden = true; }, 7000);
   } else if (available) $('#spinHelp').textContent = `Tienes ${m.spinTokens || 1} giro${m.spinTokens === 1 ? '' : 's'} disponible${m.spinTokens === 1 ? '' : 's'}.`;
 }
+$('#spinBoxes').addEventListener('click', e => {
+  const box=e.target.closest('[data-box]');if(!box||box.disabled)return;
+  const buttons=[...$('#spinBoxes').querySelectorAll('button')];buttons.forEach(b=>b.disabled=true);
+  pub('action',{action:'spin',boxIndex:Number(box.dataset.box)},1);
+  $('#spinHelp').textContent='Abriendo tu caja…';
+});
 $('#spinAction').onclick = () => {
   if ($('#spinAction').disabled) return;
-  if ($('#spinTarget').hidden) {
-    pub('action', { action: 'spin' }, 1); $('#spinAction').disabled = true; $('#spinHelp').textContent = 'La ruleta está girando…';
-  } else {
-    const targetId = $('#spinTarget').value;
-    if (!targetId) return;
-    pub('action', { action: 'target', targetId }, 1); $('#spinAction').disabled = true; $('#spinHelp').textContent = 'Aplicando sabotaje…';
-  }
+  const targetId = $('#spinTarget').value;
+  if (!targetId) return;
+  pub('action', { action: 'target', targetId }, 1); $('#spinAction').disabled = true; $('#spinHelp').textContent = 'Aplicando sabotaje…';
 };
 // ---------- botones ----------
 const setOn = (id, on) => { $(id).classList.toggle('active', on); $(id).setAttribute('aria-pressed', on); };
