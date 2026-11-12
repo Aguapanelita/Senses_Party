@@ -90,7 +90,8 @@ h2 { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: v
 .round-callout { display: flex; align-items: center; gap: 10px; width: fit-content; max-width: 100%; margin: 2px 0 15px; padding: 8px 12px; border: 1px solid #37d9f24a; border-radius: 7px 16px 16px 7px; background: #37d9f20c; color: #d7f9ff; font-size: 12px; }
 .round-led { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--pink); box-shadow: 0 0 12px #ff4d8d99; }
 .stage-wrap { position: relative; display: flex; flex: 1; min-height: 330px; border: 1px solid #ffffff1c; border-radius: 18px; overflow: hidden; background: #11111b; box-shadow: inset 0 0 50px #06060d70; }
-#stage { display: block; width: 100%; height: 100%; min-height: 330px; flex: 1; background: transparent; }
+/* el canvas flota dentro de .stage-wrap: así nunca empuja ni deforma el resto de la página */
+#stage { position: absolute; inset: 0; display: block; width: 100%; height: 100%; background: transparent; }
 .stage-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .stage-foot .spacer { flex: 1; }
 .stage-code { color: #77748c; font: 10px var(--mono); letter-spacing: .12em; }
@@ -157,7 +158,7 @@ body.projector-mode .arena-heading h1 { font-size: clamp(40px,4.2vw,68px); white
 body.projector-mode .stage-wrap { position: relative; display: flex; }
 body.projector-mode #projectorExit { display: block; }
 body.projector-mode .stage-wrap { min-height: 0; flex: 1 1 0; }
-body.projector-mode #stage { min-height: 0; }
+
 body.projector-mode .stage-foot .host-only { display: none; }
 
 /* Portada de entrada */
@@ -209,7 +210,7 @@ body.cover-open { overflow: hidden; }
   .score-slot .score-color { flex-basis: 6px; width: 6px; height: 24px; }
   .arena-heading { margin: 12px 0; }
   .arena-heading h1 { font-size: clamp(34px,8vw,58px); }
-  .stage-wrap,#stage { min-height: 270px; }
+  .stage-wrap { min-height: 270px; }
   .stage-foot #room,.stage-foot .host-only { display: none; }
   body.projector-mode .arena-heading h1 { font-size: clamp(30px,8vw,46px); white-space: normal; }
   .host-console { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-items: start; }
@@ -237,7 +238,7 @@ body.cover-open { overflow: hidden; }
   .projection-panel { min-height: 64svh; }
   .arena-heading h1 { font-size: clamp(30px,9vw,46px); }
   #instructions { font-size: 13px; }
-  .stage-wrap,#stage { min-height: 245px; }
+  .stage-wrap { min-height: 245px; }
   .stage-foot { min-width: 0; }
   .stage-foot #room,.stage-foot .host-only { display: none; }
   body.projector-mode .arena-heading h1 { font-size: clamp(29px,9vw,44px); white-space: normal; }
@@ -248,7 +249,7 @@ body.cover-open { overflow: hidden; }
 }
 @media (max-height: 620px) and (min-width: 761px) {
   .projection-panel { min-height: 560px; }
-  .stage-wrap,#stage { min-height: 240px; }
+  .stage-wrap { min-height: 240px; }
   .cover-art { width: min(27vw,310px); }
   .cover-kicker { margin-bottom: 18px; }
   .cover-logo { font-size: clamp(55px,9vw,108px); }

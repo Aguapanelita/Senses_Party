@@ -11,6 +11,11 @@
 <style>
   * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
   html, body { font-size: 16px; overscroll-behavior: none; user-select: none; -webkit-user-select: none; }
+  /* La página debe tener un ALTO REAL igual a la pantalla del celular. Antes solo tenía min-height,
+     y la zona de juego (#surface), que reparte "el espacio que sobra", quedaba con 0 px de alto:
+     no se podía tocar y la cámara no tenía dónde verse. (100vh es el respaldo para navegadores antiguos) */
+  html { height: 100%; }
+  body { height: 100vh; height: 100dvh; overflow-y: auto; }
   body { display: flex; flex-direction: column; gap: var(--sp-3); padding: max(var(--sp-3), env(safe-area-inset-top)) max(var(--sp-3), env(safe-area-inset-right)) max(var(--sp-3), env(safe-area-inset-bottom)) max(var(--sp-3), env(safe-area-inset-left)); }
   input { width: 100%; min-height: 48px; padding: 12px 14px; border-radius: var(--r-m); background: var(--bg-2); user-select: text; -webkit-user-select: text; font-size: 16px; /* 16px evita el zoom de iOS */ }
   label { font-size: 13px; font-weight: 500; }
@@ -24,23 +29,25 @@
   #bar { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; }
   #st { font-weight: 600; } #st.on { color: var(--ok); } #st.warn { color: var(--warn); }
   #hostState { min-height:18px; padding:0 6px; color:var(--warn); } #hostState.on { color:var(--ok); }
-  #surface { position: relative; isolation:isolate; flex: 1; min-height: 0; border-radius: var(--r-l); border: 1px solid var(--line-2); overflow: hidden; touch-action: none;
-             background: radial-gradient(circle at 50% 40%, #2a1e46, #0d0915 72%); }
+  /* min-height: 45vh garantiza que la zona táctil nunca baje de casi media pantalla */
+  #surface { position: relative; isolation:isolate; flex: 1 0 auto; min-height: 45vh; border-radius: var(--r-l); border: 1px solid var(--line-2); overflow: hidden; touch-action: none;
+             background: radial-gradient(circle at 50% 40%, #2a1e46, #0d0915 72%); transition: box-shadow 120ms ease, border-color 120ms ease; }
+  /* destello del borde con cada toque (reacción visible de que el toque se registró) */
+  #surface.flash { border-color: #c6ff36; box-shadow: inset 0 0 0 3px #c6ff36, 0 0 18px #c6ff3666; }
+  /* indicador "TACTO: TRUE / FALSE" con la cantidad de dedos apoyados */
+  #touchState { position:absolute; z-index:4; right:10px; bottom:10px; padding:7px 11px; border-radius:999px; border:1px solid #ffffff44; background:#0c0b16e6; color:#b8b3c3; font:700 12px/1 var(--mono); letter-spacing:.06em; pointer-events:none; }
+  #touchState.on { color:#171c08; background:#c6ff36; border-color:#e3ff8c; box-shadow:0 0 14px #c6ff3688; }
   #cameraPreview { position:absolute; z-index:1; inset:0; width:100%; height:100%; object-fit:cover; display:none; transform:translateZ(0); pointer-events:none; background:#000; }
   #cameraPreview.active { display:block; }
-  #surface.camera-active #cv, #surface.camera-active #hud, #surface.camera-active #hint { display:none !important; }
+  /* con la cámara encendida se ocultan los textos, pero los dibujos de los toques (#cv) siguen visibles encima */
+  #surface.camera-active #hud, #surface.camera-active #hint { display:none !important; }
+  #camAsk { min-height:64px; font-size:18px; font-weight:700; }
+  #camAsk[hidden] { display:none !important; }
   #cv, #hud, #hint { z-index:2; }
   #cameraLabel { position:absolute; z-index:3; left:10px; bottom:10px; padding:6px 9px; border:1px solid #ffffff55; border-radius:999px; background:#090812d9; color:#fff; font:600 10px/1.2 var(--mono); letter-spacing:.08em; pointer-events:none; }
   #cameraLabel[hidden] { display:none; }
   #colorPrompt { position:absolute; z-index:3; top:12px; left:50%; transform:translateX(-50%); padding:9px 18px; border-radius:999px; background:#101319f2; color:#fff; font-weight:700; font-size:14px; border:1px solid #ffffff44; white-space:nowrap; box-shadow:0 4px 16px #000a; }
   #colorPrompt[hidden] { display:none; }
-  #tapHud { position:absolute; z-index:4; top:10px; left:10px; width:128px; padding:9px; border:1px solid #c6ff3688; border-radius:12px; background:#0c0b16eF; box-shadow:0 6px 20px #05040aaa; pointer-events:none; }
-  #tapHud[hidden] { display:none !important; }
-  #tapHudHead { display:flex; align-items:baseline; justify-content:space-between; gap:5px; margin-bottom:7px; color:#c6ff36; font:700 10px/1 var(--mono); letter-spacing:.06em; }
-  #tapHudCount { color:#fff; font-size:13px; font-variant-numeric:tabular-nums; }
-  #tapDots { display:grid; grid-template-columns:repeat(10,1fr); gap:3px; }
-  .tap-dot { width:8px; height:8px; border-radius:2px; background:#343142; border:1px solid #59536d; }
-  .tap-dot.lit { background:#c6ff36; border-color:#e3ff8c; box-shadow:0 0 7px #c6ff3670; }
   #cv { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   #hud { position: absolute; left: 12px; top: 10px; right: 12px; font: 12px/1.5 var(--mono); color: #d8d2ee; pointer-events: none; white-space: pre; text-shadow: 0 1px 2px #000; overflow: hidden; }
   #hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--mut); pointer-events: none; text-align: center; padding: 0 32px; font-size: 15px; }
@@ -74,7 +81,8 @@
   <div id="run">
     <div id="bar"><span id="st" role="status" aria-live="polite">Conectando…</span><span id="info"></span></div>
     <div id="hostState" class="msg" role="status" aria-live="polite">Esperando respuesta de la pantalla anfitriona…</div>
-    <div id="surface"><video id="cameraPreview" autoplay playsinline webkit-playsinline muted aria-label="Vista en vivo de la cámara del teléfono"></video><div id="cameraLabel" hidden>VISTA EN VIVO · SOLO EN ESTE TELÉFONO</div><div id="tapHud" hidden><div id="tapHudHead"><span>TOQUES</span><span id="tapHudCount">0/100</span></div><div id="tapDots" aria-hidden="true"></div></div><div id="colorPrompt" hidden></div><canvas id="cv" aria-hidden="true"></canvas><div id="hud" aria-hidden="true"></div><div id="hint">Toca y arrastra con uno o varios dedos</div></div>
+    <button id="camAsk" class="primary" type="button" hidden>📷 Activar cámara para la Caza de colores</button>
+    <div id="surface"><video id="cameraPreview" autoplay playsinline webkit-playsinline muted aria-label="Vista en vivo de la cámara del teléfono"></video><div id="cameraLabel" hidden>VISTA EN VIVO · SOLO EN ESTE TELÉFONO</div><div id="colorPrompt" hidden></div><canvas id="cv" aria-hidden="true"></canvas><div id="hud" aria-hidden="true"></div><div id="hint">Toca y arrastra con uno o varios dedos</div><div id="touchState" aria-live="polite">TACTO: FALSE</div></div>
     <div id="mods">
       <button class="mod" id="m-motion" aria-pressed="false">Giro<small id="v-motion">–</small></button>
       <button class="mod" id="m-mic" aria-pressed="false">Micrófono<small id="v-mic">–</small></button>
@@ -98,6 +106,7 @@ const Q = new URLSearchParams(location.search);
 $('#name').value = ls('tacto.name') || '';
 $('#sala').value = Tacto.clean(Q.get('sala')) || Tacto.clean(ls('tacto.sala')) || '';
 
+let session = ''; // identifica ESTA conexión; la pantalla ignora avisos de desconexión de conexiones anteriores
 let client = null, base = '', name = '', sala = '', voiceAutoManaged = false, voiceCommandSeq = 0, voiceAwaitingTap = false, voiceActiveSoundIndex = 0, voiceMicStopTimer = 0;
 const dev = ls('tacto.dev') || (ls('tacto.dev', Tacto.rand(6)), ls('tacto.dev'));
 const pub = (kind, obj, qos = 0, retain = false) => client && client.connected && client.publish(`${base}/${kind}`, JSON.stringify(obj), { qos, retain });
@@ -107,12 +116,15 @@ const S = { f: { min: 9, max: -1, n: 0 }, d: { min: 1e9, max: -1, n: 0 } };
 const quality = (s, eps) => (!s.n ? 'sin datos aún' : s.max <= 0 ? 'sin dato' : s.n > 20 && s.max - s.min < eps ? 'constante' : 'variable');
 const caps = () => ({ presion: quality(S.f, 0.02), diametro: quality(S.d, 1), tacto: 'ontouchstart' in window ? 'touch' : 'puntero' });
 let lastCaps = '';
-function publishStatus() { pub('status', { online: true, name, caps: { ...caps(), motion: motionOn, mic: !!micStream, cam: !!camStream } }, 1, true); }
+// camAvail: el teléfono PUEDE usar cámara (página segura con HTTPS y navegador compatible), aunque aún no esté encendida
+const camAvailable = () => !!(window.isSecureContext && navigator.mediaDevices?.getUserMedia);
+function publishStatus() { pub('status', { online: true, s: session, name, caps: { ...caps(), motion: motionOn, mic: !!micStream, cam: !!camStream, camAvail: camAvailable() } }, 1, true); }
 
 // ---------- conexión MQTT ----------
 async function connect() {
   base = `tacto/${sala}/${dev}`;
-  const will = { topic: `${base}/status`, payload: JSON.stringify({ online: false, name }), qos: 1, retain: true };
+  session = Tacto.rand(6);
+  const will = { topic: `${base}/status`, payload: JSON.stringify({ online: false, s: session, name }), qos: 1, retain: true };
   const o = await Tacto.open({ clientId: 'tel-' + dev + '-' + Tacto.rand(5), will });
   client = o.client;
   const where = /^wss?:\/\/(localhost|\d+\.\d+\.\d+\.\d+)/.test(o.broker) ? 'broker local' : 'broker público';
@@ -120,58 +132,59 @@ async function connect() {
   client.on('connect', () => {
     $('#st').textContent = '● conectado'; $('#st').className = 'on';
     $('#hostState').textContent = 'Conectado al broker; esperando a la pantalla anfitriona…'; $('#hostState').className = 'msg';
-    client.subscribe(`${base}/cmd`); publishStatus();
+    client.subscribe(`${base}/cmd`, { qos: 1 }); publishStatus(); // qos 1 = entrega garantizada de los avisos de la pantalla
   });
   client.on('reconnect', () => { $('#st').textContent = 'Reconectando…'; $('#st').className = 'warn'; $('#hostState').textContent = 'Reconectando con la sala…'; $('#hostState').className = 'msg'; });
   client.on('offline', () => { $('#st').textContent = 'Sin conexión'; $('#st').className = 'warn'; $('#hostState').textContent = 'Se perdió la conexión con la sala.'; $('#hostState').className = 'msg'; });
   client.on('close', () => { $('#st').textContent = 'Sin conexión'; $('#st').className = 'warn'; $('#hostState').textContent = 'Se perdió la conexión con la sala.'; $('#hostState').className = 'msg'; });
   client.on('error', e => { $('#err2').textContent = 'MQTT: ' + (e.message || e); });
   client.on('message', (t, p) => { // responde al ping y recibe disponibilidad/resultados de la ruleta
-    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); if (m.hostReady) { $('#hostState').textContent = 'La pantalla anfitriona recibió este teléfono.'; $('#hostState').className = 'msg on'; } if ('tapMode' in m || 'tapProgress' in m) updateTapHud(m); if (m.voiceTurn) handleVoiceTurn(m.voiceTurn); if ('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m || 'colorTarget' in m) updateSpinUi(m); } catch {}
+    try { const m = JSON.parse(p.toString()); if (m.ping != null) pub('pong', { t: m.ping }); if (m.hostReady) { $('#hostState').textContent = 'La pantalla anfitriona recibió este teléfono.'; $('#hostState').className = 'msg on'; } if (m.voiceTurn) handleVoiceTurn(m.voiceTurn); if (m.camRequest || 'colorTarget' in m) updateCamAsk(m); if ('spinAvailable' in m || 'sabotagePending' in m || 'spinResult' in m || 'colorTarget' in m) updateSpinUi(m); } catch {}
   });
 }
 
 // ---------- tacto ----------
 const surf = $('#surface'), cv = $('#cv'), g = cv.getContext('2d');
 let cur = { n: 0, p: [], ar: 1 }, lastN = 0, queued = false;
-const TAP_TARGET = 100;
-let tapModeOn = false, tapCountLocal = 0, tapDotsReady = false;
-function updateTapHud(m = {}) {
-  if ('tapMode' in m) tapModeOn = !!m.tapMode;
-  if (m.reset) {
-    tapCountLocal = 0;
-  } else if ('tapProgress' in m) {
-    tapCountLocal = Math.max(tapCountLocal, clamp(Math.floor(Number(m.tapProgress) || 0), 0, TAP_TARGET));
-  }
-  const hud = $('#tapHud');
-  hud.hidden = !tapModeOn && tapCountLocal === 0;
-  if (hud.hidden) return;
-  const dots = $('#tapDots');
-  if (!tapDotsReady || dots.childElementCount !== TAP_TARGET) {
-    dots.replaceChildren(...Array.from({ length: TAP_TARGET }, () => {
-      const dot = document.createElement('i');
-      dot.className = 'tap-dot';
-      return dot;
-    }));
-    tapDotsReady = true;
-  }
-  $('#tapHudCount').textContent = tapCountLocal >= TAP_TARGET ? `${TAP_TARGET}/${TAP_TARGET} ¡META!` : `${tapCountLocal}/${TAP_TARGET}`;
-  const children = dots.children;
-  for (let i = 0; i < children.length; i++) {
-    children[i].classList.toggle('lit', i < tapCountLocal);
-  }
-}
+const MAX_FINGERS = 10; // cada dedo nuevo suma 1 toque; 10 = los dedos de las dos manos
+// Envía "n dedos nuevos tocaron la pantalla".
+// Se envía SIEMPRE (no solo cuando el celular sabe que hay carrera): si el aviso "empezó la carrera"
+// se pierde, los toques igual llegan. La pantalla grande ignora los toques cuando no hay carrera.
 function sendTapPress(count = 1) {
-  if (!tapModeOn) return;
-  const n = Math.max(1, Math.min(3, Math.floor(Number(count) || 1)));
-  if (tapCountLocal >= TAP_TARGET) return;
-  tapCountLocal = Math.min(TAP_TARGET, tapCountLocal + n);
-  updateTapHud({ tapProgress: tapCountLocal });
-  const eventId = `${Date.now()}-${Tacto.rand(8)}`;
+  const n = Math.max(1, Math.min(MAX_FINGERS, Math.floor(Number(count) || 1)));
+  tapReaction();
+  const eventId = `${Date.now()}-${Tacto.rand(8)}`; // identificador único: un mismo toque no se cuenta dos veces
   pub('action', { action: 'tap', eventId, count: n }, 1);
+}
+// Reacción visible (y táctil) de que el toque se registró: destello del borde + vibración corta.
+let flashTimer = 0;
+function tapReaction() {
+  surf.classList.add('flash');
+  clearTimeout(flashTimer); flashTimer = setTimeout(() => surf.classList.remove('flash'), 120);
+  try { navigator.vibrate?.(12); } catch {} // en iPhone no existe la vibración desde la web: simplemente no hace nada
+}
+// Indicador "TACTO: TRUE / FALSE" con la cantidad de dedos apoyados.
+let lastTouchState = -1;
+function updateTouchState(n) {
+  if (n === lastTouchState) return; lastTouchState = n;
+  const el = $('#touchState');
+  el.textContent = n > 0 ? `TACTO: TRUE · ${n} dedo${n > 1 ? 's' : ''}` : 'TACTO: FALSE';
+  el.classList.toggle('on', n > 0);
 }
 function fit() { const d = devicePixelRatio || 1, r = surf.getBoundingClientRect(); cv.width = r.width * d; cv.height = r.height * d; g.setTransform(d, 0, 0, d, 0, 0); }
 addEventListener('resize', fit);
+// ResizeObserver: reajusta el canvas cada vez que la zona de juego cambia de tamaño
+// (aparece un mensaje, el panel de cajas, el botón de cámara…), no solo al girar la pantalla.
+if (window.ResizeObserver) new ResizeObserver(fit).observe(surf);
+
+// Ondas: cada toque deja un círculo que se agranda y desaparece en 400 ms, para que se note aunque el toque sea rápido.
+const ripples = [], RIPPLE_MS = 400;
+function addRipple(clientX, clientY) {
+  const r = surf.getBoundingClientRect();
+  ripples.push({ x: clientX - r.left, y: clientY - r.top, t: performance.now() });
+  if (ripples.length > 30) ripples.shift();
+  $('#hint').style.display = 'none';
+}
 
 function setTouches(p, r) {
   cur = { n: p.length, p, ar: r3(r.width / r.height) };
@@ -180,17 +193,18 @@ function setTouches(p, r) {
     S.d.n++; S.d.min = Math.min(S.d.min, z.d); S.d.max = Math.max(S.d.max, z.d);
   }
   if (p.length) $('#hint').style.display = 'none';
+  updateTouchState(p.length);
   if (cur.n !== lastN) { lastN = cur.n; sendTouch(1); } // cambios de cantidad de dedos: entrega garantizada
   else if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; sendTouch(0); }); } // movimiento: hasta ~60 por segundo
 }
 const sendTouch = qos => pub('touch', { t: Date.now(), n: cur.n, ar: cur.ar, p: cur.p.map(z => ({ i: z.i, x: r3(z.x), y: r3(z.y), f: r3(z.f), d: Math.round(z.d) })) }, qos);
 
 // Dedos (Touch Events: traen presión y radio de contacto)
-const slots = new Map(); // identifier -> casilla 1..3 (estable mientras el dedo siga apoyado)
+const slots = new Map(); // identifier -> casilla 1..MAX_FINGERS (estable mientras el dedo siga apoyado)
 function slotFor(id) {
   if (slots.has(id)) return slots.get(id);
   const used = new Set(slots.values());
-  for (let s = 1; s <= 3; s++) if (!used.has(s)) { slots.set(id, s); return s; }
+  for (let s = 1; s <= MAX_FINGERS; s++) if (!used.has(s)) { slots.set(id, s); return s; }
   return null;
 }
 function onTouch(e) {
@@ -198,8 +212,8 @@ function onTouch(e) {
   const r = surf.getBoundingClientRect(), list = Array.from(e.targetTouches), ids = new Set(list.map(t => t.identifier));
   for (const id of [...slots.keys()]) if (!ids.has(id)) slots.delete(id);
   if (e.type === 'touchstart' && e.changedTouches?.length) {
-    const freshCount = Math.min(3, Math.max(1, e.changedTouches.length));
-    sendTapPress(freshCount);
+    sendTapPress(e.changedTouches.length); // cada dedo nuevo suma 1, sin importar cuántos haya ya apoyados
+    for (const t of e.changedTouches) addRipple(t.clientX, t.clientY);
   }
   const p = [];
   for (const t of list) {
@@ -213,19 +227,21 @@ function onTouch(e) {
 ['gesturestart', 'gesturechange'].forEach(n => document.addEventListener(n, e => e.preventDefault()));
 surf.addEventListener('contextmenu', e => e.preventDefault());
 
-// Ratón o lápiz (para probar desde un computador)
+// Ratón o lápiz (para probar desde un computador).
+// Los dedos ya se procesan arriba con Touch Events; por eso aquí se ignora pointerType 'touch'
+// (antes cada toque se procesaba dos veces y el dibujo parpadeaba).
 const ptrs = new Map();
 function fromPtrs() {
   const r = surf.getBoundingClientRect(), p = []; let i = 0;
-  for (const e of ptrs.values()) { if (++i > 3) break; p.push({ i, x: clamp((e.clientX - r.left) / r.width), y: clamp((e.clientY - r.top) / r.height), f: e.pressure || 0, d: Math.max(e.width || 0, e.height || 0) }); }
+  for (const e of ptrs.values()) { if (++i > MAX_FINGERS) break; p.push({ i, x: clamp((e.clientX - r.left) / r.width), y: clamp((e.clientY - r.top) / r.height), f: e.pressure || 0, d: Math.max(e.width || 0, e.height || 0) }); }
   setTouches(p, r);
 }
 surf.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch') return;
   try { surf.setPointerCapture(e.pointerId); } catch {}
   ptrs.set(e.pointerId, e);
-  if (e.pointerType !== 'touch') {
-    sendTapPress(1);
-  }
+  sendTapPress(1);
+  addRipple(e.clientX, e.clientY);
   fromPtrs();
 });
 surf.addEventListener('pointermove', e => { if (ptrs.has(e.pointerId)) { ptrs.set(e.pointerId, e); fromPtrs(); } });
@@ -241,6 +257,13 @@ function draw() {
     g.strokeStyle = '#e6ff3d'; g.lineWidth = 2; g.beginPath(); g.arc(x, y, rad, 0, 7); g.stroke();
     g.beginPath(); g.moveTo(x - rad - 10, y); g.lineTo(x + rad + 10, y); g.moveTo(x, y - rad - 10); g.lineTo(x, y + rad + 10); g.stroke();
     g.fillStyle = '#fff'; g.font = '13px system-ui'; g.textAlign = 'center'; g.fillText(z.i, x, y - rad - 14);
+  }
+  const now = performance.now();
+  while (ripples.length && now - ripples[0].t > RIPPLE_MS) ripples.shift(); // descarta las ondas que ya terminaron
+  for (const w of ripples) {
+    const age = (now - w.t) / RIPPLE_MS; // de 0 (recién tocado) a 1 (desaparece)
+    g.strokeStyle = `rgba(198,255,54,${1 - age})`; g.lineWidth = 4 * (1 - age) + 1;
+    g.beginPath(); g.arc(w.x, w.y, 24 + 56 * age, 0, Math.PI * 2); g.stroke();
   }
   const c = caps(), lines = [`dedos ${cur.n}`];
   for (const z of cur.p) lines.push(`${z.i}  x ${r2(z.x).toFixed(2)}  y ${r2(z.y).toFixed(2)}  presión ${r2(z.f).toFixed(2)}  ⌀ ${Math.round(z.d)} px`);
@@ -259,9 +282,12 @@ async function askMotion() { // iOS exige permiso explícito desde un gesto; And
       if (r !== 'granted') throw new Error('Permiso de movimiento denegado. En iPhone: cierra Safari por completo y vuelve a entrar.');
     }
 }
+let angT = 0;
 function bindMotion() {
   if (bound) return; bound = true;
-  addEventListener('deviceorientation', e => { ang = [e.alpha || 0, e.beta || 0, e.gamma || 0]; mdirty = true; });
+  // angT = hora exacta en que el sensor midió el giro. La pantalla la usa para reproducir
+  // el movimiento al ritmo real del sensor, aunque los mensajes lleguen a ráfagas por la red.
+  addEventListener('deviceorientation', e => { ang = [e.alpha || 0, e.beta || 0, e.gamma || 0]; angT = Date.now(); mdirty = true; });
   addEventListener('devicemotion', e => {
     const r = e.rotationRate, a = e.accelerationIncludingGravity;
     if (r) rot = [r.beta || 0, r.gamma || 0, r.alpha || 0]; // ejes X, Y, Z en °/s
@@ -269,9 +295,9 @@ function bindMotion() {
   });
   setInterval(() => {
     if (!motionOn || !mdirty) return; mdirty = false;
-    pub('motion', { t: Date.now(), a: ang && ang.map(r1), r: rot && rot.map(r1), c: acc && acc.map(r2) });
+    pub('motion', { t: angT || Date.now(), a: ang && ang.map(r1), r: rot && rot.map(r1), c: acc && acc.map(r2) });
     if (ang) $('#v-motion').textContent = `${Math.round(ang[1])}° ${Math.round(ang[2])}°`;
-  }, 16);
+  }, 33); // unos 30 envíos por segundo, y solo cuando el giro cambió (mdirty): fluido sin saturar la pantalla
 }
 
 // ---------- micrófono ----------
@@ -335,7 +361,7 @@ async function startCam() {
     } else throw e;
   }
   cameraVideo.srcObject = camStream; cameraVideo.classList.add('active'); surf.classList.add('camera-active');
-  $('#cv').style.display = 'none'; $('#hud').style.display = 'none'; $('#hint').style.display = 'none';
+  $('#hud').style.display = 'none'; $('#hint').style.display = 'none'; // #cv sigue visible: los toques se dibujan sobre la cámara
   try {
     const metadata=cameraVideo.videoWidth?Promise.resolve():new Promise(resolve=>cameraVideo.addEventListener('loadedmetadata',resolve,{once:true}));
     await cameraVideo.play();
@@ -365,6 +391,28 @@ async function startCam() {
   }, 80);
 }
 function stopCam() { clearInterval(camTimer);camStream?.getTracks().forEach(t => t.stop()); camStream = null; cameraVideo.pause(); cameraVideo.srcObject = null; cameraVideo.classList.remove('active'); surf.classList.remove('camera-active'); $('#cameraLabel').hidden=true; $('#cv').style.display=''; $('#hud').style.display=''; if(!cur.n)$('#hint').style.display='grid'; }
+
+// ---------- cámara pedida por la pantalla (Caza de colores) ----------
+// Por seguridad, el navegador solo enciende la cámara si la persona toca algo:
+// por eso mostramos un botón grande en vez de encenderla sola.
+let camWanted = false, camAutoManaged = false; // camAutoManaged = la encendió el juego, así que el juego la apaga
+function refreshCamAsk() { $('#camAsk').hidden = !camWanted || !!camStream; }
+function updateCamAsk(m) {
+  if (m.camRequest || m.colorTarget?.name) camWanted = true;
+  else if ('colorTarget' in m && !m.colorTarget) { // terminó la Caza de colores
+    camWanted = false;
+    if (camAutoManaged && camStream) { stopCam(); setOn('#m-cam', false); $('#v-cam').textContent = '–'; publishStatus(); }
+    camAutoManaged = false;
+  }
+  refreshCamAsk();
+}
+$('#camAsk').onclick = async () => {
+  if (camStream) return refreshCamAsk();
+  $('#camAsk').disabled = true;
+  try { $('#err2').textContent = ''; await startCam(); camAutoManaged = true; setOn('#m-cam', true); publishStatus(); }
+  catch (e) { fail(e); }
+  finally { $('#camAsk').disabled = false; refreshCamAsk(); }
+};
 
 // ---------- ruleta de campeonato ----------
 let spinUiTimer = 0;
@@ -422,7 +470,8 @@ $('#m-mic').onclick = async () => {
   }
 };
 $('#m-cam').onclick = async () => {
-  try { $('#err2').textContent = ''; if (camStream) { stopCam(); setOn('#m-cam', false); $('#v-cam').textContent = '–'; } else { await startCam(); setOn('#m-cam', true); } publishStatus(); } catch (e) { fail(e); }
+  try { $('#err2').textContent = ''; camAutoManaged = false; if (camStream) { stopCam(); setOn('#m-cam', false); $('#v-cam').textContent = '–'; } else { await startCam(); setOn('#m-cam', true); } publishStatus(); } catch (e) { fail(e); }
+  refreshCamAsk();
 };
 
 // ---------- entrar ----------
