@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#11111b">
+<title>SENSES PARTY</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="ui.css">
+</head>
+<body class="host-page cover-open">
+<section id="cover" class="start-cover" aria-label="Portada de Senses Party">
+  <div class="cover-copy">
+    <span class="cover-kicker">JUEGO COLECTIVO · SENSORES EN MOVIMIENTO</span>
+    <h1 class="cover-logo"><span>SENSES</span><em>PARTY</em></h1>
+    <div class="cover-rule"></div>
+    <p class="cover-subtitle">Una pantalla. Muchos controles. Cada partida cambia cuando todos entran en juego.</p>
+    <div class="cover-action-row"><button id="enterRoom" type="button">ENTRAR A LA SALA</button><span class="cover-hint">PANTALLA PRINCIPAL · EXPERIENCIA MULTIJUGADOR</span></div>
+  </div>
+  <div class="cover-art" aria-hidden="true"><div class="cover-orbit"></div><div class="cover-core">S</div><div class="cover-block"></div><div class="cover-dot-matrix"></div></div>
+  <div class="cover-footer"><span class="cover-connection"><i id="coverLed"></i><span id="coverStatus">Conectando con la sala…</span></span><span>TACTO / MULTIPLAYER SYSTEM</span></div>
+</section>
+<header class="host-topbar">
+  <a class="brand-mark" href="#" aria-label="Senses Party"><span class="brand-glyph">S</span><span class="brand-word">SENSES <span>PARTY</span></span></a>
+  <span class="topbar-label">EXPERIMENTAL ARCADE / HOST CONSOLE</span>
+  <div class="topbar-meta"><span id="connection" class="pill">Conectando…</span><span id="latency" class="pill"></span><span id="crownStatus" class="pill">CORONA · 5 PUNTOS</span></div>
+</header>
+<main class="arena-layout">
+  <section class="projection-panel" aria-label="Escenario principal">
+    <div class="arena-head"><div class="arena-heading"><span class="arena-kicker">SENSES PARTY / JUEGO EN CURSO</span><h1 id="arenaTitle">LA <span class="title-accent">SALA</span> ESTÁ LISTA</h1><p id="instructions">Cada toque hace avanzar tu barra. Llega a 100 toques; usa todos los dedos que quieras: cada dedo nuevo suma un toque.</p><p id="modeName">Carrera de toques</p></div><div id="projectedScoreboard" class="projected-scoreboard" aria-label="Marcador de jugadores" aria-live="polite"><div class="score-empty">Esperando jugadores</div></div></div>
+    <div id="round" class="round-callout" role="status" aria-live="polite"><i class="round-led"></i><span id="roundText">Listos para jugar</span></div>
+    <div class="stage-wrap"><canvas id="stage" aria-label="Escenario del minijuego"></canvas><section id="sequenceOverlay" class="sequence-overlay" hidden aria-live="assertive"><span id="sequenceKicker" class="console-kicker">CAMPEONATO</span><h2 id="sequenceTitle">Resultados</h2><p id="sequenceMessage"></p><div id="sequenceScores" class="sequence-scores"></div><button id="sequenceContinue" class="primary" type="button" hidden>Continuar</button></section></div>
+    <div class="stage-foot"><span class="stage-code">SENSES / ARENA 01</span><span class="spacer"></span><span id="room" class="pill">SALA ···</span><span class="host-only pill">5 PUNTOS HASTA LA CORONA</span></div>
+  </section>
+  <aside class="host-console" aria-label="Consola del anfitrión">
+    <section class="console-panel">
+      <span class="console-kicker">CONFIGURACIÓN DE SALA</span><h2 class="console-title">HOST CONSOLE <small>01 / LOBBY</small></h2>
+      <div class="room-code-row"><div><span class="room-code-caption">CÓDIGO DE SALA</span><strong id="roomDuplicate">······</strong></div><span id="connectionDuplicate" class="pill">Conectando…</span></div>
+      <div class="qrrow"><img id="qr" alt="Código QR para conectar teléfonos" hidden><div class="qr-copy"><b>Conecta los teléfonos</b><p class="tiny">Abre este enlace en cada teléfono para entrar a la sala.</p><code id="phoneUrl"></code></div></div>
+      <p id="notice" role="status"></p>
+      <div class="console-actions"><button id="newRoom" type="button">Nueva sala</button><button id="projectorToggle" type="button">Ver proyección</button></div>
+    </section>
+    <section class="console-panel">
+      <span class="console-kicker">CONTROLES DE PARTIDA</span><h2 class="console-title">ELIGE EL RETO <small>02 / GAME</small></h2>
+      <div class="game-controls"><label class="field-label" for="mode">Minijuego</label><select id="mode"><option value="tap">Carrera de toques</option><option value="tilt">Torre en equilibrio</option><option value="color">Caza de colores</option><option value="voice">Acierta la nota</option></select><button id="start" class="primary" type="button">Iniciar ronda</button><button id="sequenceStart" type="button">Iniciar campeonato</button><button id="sequencePause" type="button" disabled>Pausar</button><button id="sequenceStop" type="button" disabled>Detener</button><button id="reset" type="button">Reiniciar campeonato</button></div>
+    </section>
+    <section class="console-panel">
+      <span class="console-kicker">CAMPEONATO</span><h2 class="console-title">RUMBO A LA CORONA <small>03 / SCORE</small></h2>
+      <p class="tiny">Cada victoria suma un punto. La corona se alcanza con cinco; los sabotajes pueden restar puntos y los escudos los bloquean.</p>
+      <div id="scoreboard" class="scoreboard-console">Sin jugadores conectados</div>
+      <div id="mysteryBoxes" class="mystery-boxes" aria-label="Cajas sorpresa"><div class="mystery-box" data-box="0"><span>?</span></div><div class="mystery-box" data-box="1"><span>?</span></div><div class="mystery-box" data-box="2"><span>?</span></div></div><p id="wheelStatus" class="tiny">Cada jugador recibe una caja cada 3 juegos.</p>
+      <details class="sensor-details"><summary>Jugadores y sensores en vivo</summary><div id="players" class="players"><p class="tiny">Esperando teléfonos…</p></div></details>
+    </section>
+  </aside>
+</main>
+<button id="projectorExit" type="button">Volver a consola</button>
+<script src="config.js"></script><script src="tacto.js"></script><script src="game-engines.js"></script><script src="mvp.js"></script>
+</body></html>
