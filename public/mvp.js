@@ -8,7 +8,7 @@ const GAME_SECONDS = { tilt: 60, color: 30 };
 const VOICE_CUE_SECONDS = 1.15, VOICE_ATTEMPT_SECONDS = 3, VOICE_PERMISSION_TIMEOUT = 10000, VOICE_TURN_GAP = 700;
 const COLOR_COUNTDOWN_MS = 5000;      // tiempo para activar la cámara antes de la Caza de colores (modo individual)
 const MOTION_FRESH_MS = 5000;         // el giro cuenta como "funcionando" si llegaron datos en los últimos 5 s
-const RESULTS_MS = 4200; // duración de la pantalla de resultados del campeonato
+const RESULTS_MS = 4200, RESULTS_WITH_BOXES_MS = 8000; // duración de la pantalla de resultados del campeonato
 const VOICE_REGISTERS = [{ name:'grave', min:82, max:165 }, { name:'medio', min:210, max:370 }, { name:'agudo', min:510, max:850 }];
 const VOICE_WAVES = ['sine','triangle','square','sawtooth'];
 const VOICE_MODIFIERS = ['vibrato','tremolo','glide','harmonic','detune','none'];
@@ -328,8 +328,7 @@ function finishGame(winnerId, reason) {
     if(championId){sequenceActive=false;sequencePhase='champion';$('#sequenceStart').disabled=true;$('#sequencePause').disabled=true;$('#sequenceStop').disabled=true;$('#sequenceContinue').hidden=true;}
     else{
       const boxesWaiting=devices().some(d=>(spinTokens[d.id]||0)>0);
-      if(boxesWaiting){sequencePhase='boxes';sequenceUntil=Infinity;showSequence('Hora de probar tu suerte','Abre una de las tres cajas desde tu teléfono. El campeonato continuará cuando todos hayan elegido.','CAJAS SORPRESA',true);setRound('Hora de probar tu suerte');}
-      else{sequenceUntil=performance.now()+RESULTS_MS;setRound(sequenceResult);}
+      sequenceUntil=performance.now()+(boxesWaiting?RESULTS_WITH_BOXES_MS:RESULTS_MS);setRound(sequenceResult);
     }
   }
 }
@@ -358,14 +357,6 @@ function spin(id, boxIndex=0) {
   }
   for (const d of others) spinState(d);
   renderPlayers();
-  advanceAfterBoxes();
-}
-function advanceAfterBoxes(){
-  if(!sequenceActive||sequencePhase!=='boxes')return;
-  const waiting=devices().some(d=>(spinTokens[d.id]||0)>0||pendingSabotage[d.id]);
-  if(waiting)return;
-  sequencePhase='results';sequenceUntil=performance.now()+RESULTS_MS;
-  showSequence('Resultados',sequenceResult,`RONDA ${completedGames}`,true);
 }
 function applySabotage(attackerId, targetId) {
   if (!pendingSabotage[attackerId] || !spinTargets[attackerId]?.some(t => t.id === targetId)) return;
@@ -383,7 +374,6 @@ function applySabotage(attackerId, targetId) {
     $('#wheelStatus').textContent = `💥 ${attacker?.name || 'Un jugador'} quitó 1 punto a ${target?.name || 'otro jugador'}.`;
   }
   renderPlayers();
-  advanceAfterBoxes();
 }
 function updateRoomFromURL() {
   const q = new URLSearchParams(location.search).get('sala');
@@ -657,14 +647,13 @@ $('#mode').value=mode;instructions();
   tacto.on('dispositivo',d=>{
     hudDirty=true;
     // Respondemos solo al teléfono que avisó su estado (antes se escribía a TODOS cada vez).
-    if(!d){updateAllSpinStates();advanceAfterBoxes();return;}
+    if(!d){updateAllSpinStates();return;}
     if(d.online)spinState(d);
     if(d.online&&running&&mode==='color'){
       if(colorCountdownUntil)command(d.id,{camRequest:true});
       else command(d.id,{colorTarget:{name:targetColor.name}});
     }
     if(d.id===voiceCurrentId&&!d.online)skipVoiceTurn('Jugador desconectado; se salta este intento.');
-    if(!d.online)advanceAfterBoxes();
   });
   // dirección de red real del servidor, para armar el enlace y el QR de los teléfonos
   fetch('info',{cache:'no-store'}).then(r=>r.json()).then(i=>{if(i&&i.baseUrl){infoBase=i.baseUrl;showRoom();}}).catch(()=>{});
