@@ -263,8 +263,14 @@ const W = 64, H = 36, work = document.createElement('canvas'); work.width = W; w
 const wctx = work.getContext('2d', { willReadFrequently: true });
 async function startCam() {
   if(!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new Error('La cámara requiere abrir el control desde el enlace HTTPS en Chrome o Safari.');
-  try { camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: 640, height: 360 }, audio: false }); }
-  catch(e) { if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError') throw new Error('Permite la cámara para este sitio en los ajustes del navegador y vuelve a tocar el botón.'); if(e.name==='NotFoundError') throw new Error('No se encontró una cámara disponible en este teléfono.'); throw e; }
+  try { camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 360 } }, audio: false }); }
+  catch(e) {
+    if(e.name==='NotAllowedError'||e.name==='PermissionDeniedError') throw new Error('Permite la cámara para este sitio en los ajustes del navegador y vuelve a tocar el botón.');
+    if(e.name==='NotFoundError'||e.name==='OverconstrainedError') {
+      try { camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); }
+      catch(fallbackError) { if(fallbackError.name==='NotAllowedError'||fallbackError.name==='PermissionDeniedError') throw new Error('Permite la cámara para este sitio en los ajustes del navegador y vuelve a tocar el botón.'); if(fallbackError.name==='NotFoundError') throw new Error('No se encontró una cámara disponible en este teléfono.'); throw fallbackError; }
+    } else throw e;
+  }
   cameraVideo.srcObject = camStream; cameraVideo.classList.add('active');
   try { await cameraVideo.play(); } catch(e) { stopCam(); throw e; }
   prev = null; let sm = 0;

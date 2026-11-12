@@ -58,6 +58,7 @@ function instructionsText(game){return ({tap:'prepárate para tocar',tilt:'activ
 function startSequence(){
   if(championId)return;
   if(!devices().length){setRound('Conecta al menos un teléfono para comenzar el campeonato.');return;}
+  prepareVoiceAudio();
   sequenceActive=true;sequencePaused=false;sequenceBag=[];sequenceLastMode='';
   $('#sequenceStart').disabled=true;$('#sequencePause').disabled=false;$('#sequencePause').textContent='Pausar';$('#sequenceStop').disabled=false;
   prepareSequenceGame();
