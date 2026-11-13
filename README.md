@@ -12,7 +12,7 @@ Una persona abre la *consola del anfitrión* en un computador o proyector. Los d
 
 1. [Qué hace](#qué-hace)
 2. [Los minijuegos](#los-minijuegos)
-3. [Campeonato, corona y cajas sorpresa](#campeonato-corona-y-cajas-sorpresa)
+3. [Campeonato y corona](#campeonato-corona-y-cajas-sorpresa)
 4. [Cómo funciona por dentro](#cómo-funciona-por-dentro)
 5. [Tecnologías y bibliotecas](#tecnologías-y-bibliotecas)
 6. [Requisitos](#requisitos)
@@ -54,16 +54,11 @@ Notas:
 
 ---
 
-## Campeonato, corona y cajas sorpresa
+## Campeonato y corona
 
 - Cada victoria en un minijuego suma **1 punto**.
 - La **corona se alcanza con 5 puntos** (`CROWN_TARGET`). Quien la logra es el campeón y termina el campeonato.
 - Cada **2 juegos completados** (`SPIN_EVERY`) cada jugador recibe una **caja sorpresa** que abre desde su teléfono. Hay tres cajas y el resultado es:
-  - 💥 **Sabotaje**: el jugador elige a un rival y le quita **1 punto**.
-  - 🛡 **Escudo**: bloquea el próximo sabotaje que reciba.
-  - … **Nada**.
-- Entre rondas, la pantalla de resultados dura más tiempo cuando hay cajas pendientes por abrir.
-- El botón **Reiniciar campeonato** borra puntos, escudos y cajas.
 
 > En la consola del anfitrión ya no existe el panel "Rumbo a la corona". Los puntos se siguen mostrando en el marcador de la proyección y en la pantalla de resultados, y las cajas se abren únicamente desde los teléfonos.
 
