@@ -22,8 +22,7 @@ Una persona abre la *consola del anfitrión* en un computador o proyector. Los d
 10. [Modos de despliegue](#modos-de-despliegue)
 11. [Estructura del proyecto](#estructura-del-proyecto)
 12. [Protocolo MQTT (Tacto)](#protocolo-mqtt-tacto)
-13. [Solución de problemas](#solución-de-problemas)
-14. [Notas de privacidad](#notas-de-privacidad)
+13. [Notas de privacidad](#notas-de-privacidad)
 
 ---
 
@@ -274,19 +273,6 @@ Todos los mensajes son JSON.
 Canales planos disponibles en la experiencia: `touch.x`, `touch.y`, `touch.f`, `touch.d`, `touch.n`, `touch.dist`, `touch.ang`, `t1..t5.*`, `ang.a/b/g`, `rot.x/y/z`, `acc.x/y/z`, `mic.level/low/mid/high/pitch`, `cam.motion/x/y/bright/hue/sat`.
 
 Como el broker también escucha en TCP (`1883`), puedes conectar un ESP32, Node‑RED o un script de Python a la misma sala y publicar/leer estos temas.
-
----
-
-## Solución de problemas
-
-- **El teléfono no carga la página.** Verifica que esté en la misma red que el computador y que el firewall permita el puerto `8443` (y `1883` si usas MQTT por TCP). Si hay varios adaptadores, fuerza la IP con `HOST_IP`.
-- **Aviso de certificado no seguro.** Es esperado: el certificado es autofirmado. Acepta continuar. Se regenera solo cuando cambian las IPs de la red.
-- **No funcionan micrófono ni cámara.** Los navegadores solo los permiten en contexto seguro. Abre el control por el enlace `https://` del QR.
-- **El giroscopio no responde en iPhone.** Hay que aceptar el permiso de "Movimiento y orientación" cuando se solicite.
-- **La Torre en equilibrio o la Caza de colores no aparecen en el campeonato.** Se excluyen si ningún teléfono envía giro o no puede usar la cámara.
-- **Un jugador se desconecta.** El "último testamento" lo marca como fuera de línea; al reconectarse puede volver a unirse a la carrera de toques en curso.
-- **Los teléfonos ven otra sala.** Pulsa **Nueva sala** en la consola y vuelve a escanear el QR, o abre la URL con `?sala=<código>`.
-- **Sin internet.** El juego funciona, pero las tipografías de Google no se cargan y se usan las del sistema.
 
 ---
 
